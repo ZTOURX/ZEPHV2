@@ -6,6 +6,29 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.0.2] — 2026-05-06
+
+### cat-bot
+
+#### Added
+
+- **`thread.getMemberCount()`** on `ThreadContext` (`ctx.thread.getMemberCount`): New unified method returning the real-time member count for the current thread or group. Platform mapping: Discord → `guild.memberCount` from gateway cache (zero REST); Telegram → `getChatMemberCount` Bot API; Facebook Messenger → `participantIDs` from the raw event payload (zero API cost on the hot path) with `getFullThreadInfo` as fallback. Defaults to the triggering event's thread when called without arguments.
+
+#### Changed
+
+- **`join.ts` and `leave.ts` greeting banners**: Both event handlers now resolve real-time member count via `thread.getMemberCount()` and thread name for greeting image cards, displaying the accurate group size at the moment of join or leave.
+
+
+#### Dependencies
+
+- **Migrated from `fca-unofficial-e2ee` to `fca-cat-bot`**: The E2EE transport layer now uses `fca-cat-bot`, which bundles `FB-Messenger-E2EE` — a pure JavaScript E2EE implementation with no Golang runtime or `meta-messenger-js` bridge. The previous library's Golang subprocess caused unbounded RSS memory growth per session. Memory under `fca-cat-bot` is stable and scales on demand.
+
+#### Performance
+
+- **Facebook Messenger `getMemberCount` short-circuit**: For current-thread queries, `participantIDs` from the raw fca event payload is used directly (zero API cost) instead of triggering a `getFullThreadInfo` GraphQL round-trip. Cross-thread queries fall back to the platform API as before.
+
+- **`participantIDs` forwarded through event router**: Raw `participantIDs` from fca events are now preserved on `message_reaction`, `message_unsend`, `event`, and `change_thread_image` payloads so join/leave handlers can derive the real-time roster length without an extra API call.
+
 ## [1.0.1] — 2026-05-02
 
 ### cat-bot
