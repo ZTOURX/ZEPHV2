@@ -6,6 +6,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.0.6] — 2026-05-07
+
+### cat-bot
+
+#### Fixed
+
+- **MQTT error state reconnects** (`src/engine/adapters/platform/facebook-messenger/index.ts`): The Facebook Messenger listener now explicitly handles the `error` state type in addition to `close` and `disconnect`. Previously, if the MQTT transport dropped with an `error` state (e.g., from network cuts or forced drops), the session would silently die because the error path never fired. This guarantees the reconnect loop correctly triggers upon transport drops.
+
+#### Dependencies
+
+- **Updated `fca-cat-bot` from `1.0.8` to `1.0.9`**: Bumped the Facebook Messenger E2EE transport library to its latest patch release. The `^1.0.9` range in `package.json` tracks future non-breaking patch fixes automatically.
+- **Updated `@johnlester-0369/fca-unofficial` from `3.0.37` to `3.0.38`**: Bumped the underlying unofficial Facebook Chat API library to include upstream patch fixes.
+
+---
+
 ## [1.0.5] — 2026-05-07
 
 ### cat-bot
