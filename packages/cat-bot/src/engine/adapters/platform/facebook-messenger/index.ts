@@ -295,12 +295,12 @@ export function createFacebookMessengerListener(
                 resolve();
                 return;
               }
-              // 'close' and 'disconnect' state types signal the MQTT transport has dropped
+              // 'close', 'disconnect' and 'error' state types signal the MQTT transport has dropped
               // without an error object — fca-unofficial fires these when the server closes
               // the connection cleanly (e.g. idle timeout, server-side restart, network cut).
               // Without this branch the session silently dies because the error path never
               // fires: fca delivers state transitions as the third callback argument, not err.
-              if (state.type === 'close' || state.type === 'disconnect') {
+              if (state.type === 'close' || state.type === 'disconnect' || state.type == 'error') {
                 // isStopping is set by emitter.stop() before calling stopListeningAsync() —
                 // stopListeningAsync() triggers a 'close' callback as part of teardown, so
                 // this guard prevents a reconnect loop from racing the deliberate stop sequence.
