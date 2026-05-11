@@ -15,6 +15,8 @@
 
 import type { StartBotConfig, StartBotResult } from './types.js';
 import type { SessionLogger } from '@/engine/modules/logger/logger.lib.js'; // Relocated module
+import { createRequire } from 'module';
+import { pathToFileURL } from 'url';
 
 /**
  * Logs in via fca-unofficial using the appstate string loaded from the database.
@@ -43,9 +45,23 @@ export async function startBot(
     );
   }
 
-  // Dynamic obscure import prevents tsc from compiling fca-cat-bot's broken .ts files
-  const pkg = 'fca-cat-bot';
-  const { fcaInstance } = (await import(pkg)) as any;
+  // Dynamic obscure import prevents tsc from compiling fca-cat-bot's broken .ts files.
+  // Dual cache-busting architecture guarantees 100% isolation between fca-cat-bot instances:
+  // 1. Clear CommonJS require.cache in case fca-cat-bot or its internal files use CJS.
+  // 2. Append a query string to the ESM import to bypass Node's ESM module cache.
+  // This forces Node.js to evaluate a completely independent global state tree for every session,
+  // preventing multiple bot profiles from colliding and merging on the same MQTT connection.
+  const require = createRequire(import.meta.url);
+  const pkgPath = require.resolve('fca-cat-bot');
+  if (require.cache) {
+    for (const key of Object.keys(require.cache)) {
+      if (key.includes('fca-cat-bot')) delete require.cache[key];
+    }
+  }
+  
+  const uid = config.sessionId ?? Date.now().toString();
+  const pkgUrl = `${pathToFileURL(pkgPath).href}?session=${uid}&t=${Date.now()}`;
+  const { fcaInstance } = (await import(pkgUrl)) as any;
 
   // Obtain the login fn and EventEmitter logger from fcaInstance. emitLogger:true routes all
   // fca internal output through fcaLogger events instead of raw stderr — keeps process output

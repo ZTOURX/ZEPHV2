@@ -203,7 +203,10 @@ export function createFacebookMessengerListener(
             '[facebook-messenger] No existing session — initial login',
           );
         }
-        const { api } = await startBot({ appstate }, sessionLogger);
+        const { api } = await startBot(
+          { appstate, sessionId: config.sessionId },
+          sessionLogger,
+        );
         activeFcaApi = api;
         activeAppstate = appstate;
         isInvalidSession = false;

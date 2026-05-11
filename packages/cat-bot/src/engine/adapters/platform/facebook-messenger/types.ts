@@ -149,6 +149,7 @@ export interface StartBotConfig {
   prefix?: string;
   /** JSON.stringify'd fca-unofficial session cookie blob loaded from the database. */
   appstate: string;
+  sessionId?: string;
 }
 
 /** Result of startBot() — raw fca api handle + null listener placeholder. */

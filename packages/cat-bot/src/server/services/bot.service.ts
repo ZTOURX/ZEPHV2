@@ -528,14 +528,10 @@ export class BotService {
     }
 
     // Force a complete teardown of the old session and rebuild from DB
-    if (sessionManager.isActive(key)) {
-      try {
-        await sessionManager.stop(key);
-      } catch (e) {
-        logger.warn(`[bot.service] restartBot: failed to stop ${key}`, {
-          error: e,
-        });
-      }
+    try {
+      await sessionManager.stop(key);
+    } catch (e) {
+      logger.warn(`[bot.service] restartBot: failed to stop ${key}`, { error: e });
     }
     // Unregister so startBot falls through to a fresh spawn with new credentials
     await sessionManager.unregister(key);
@@ -561,14 +557,10 @@ export class BotService {
 
     // Gracefully drain the transport before touching the DB so in-flight messages
     // don't crash against missing credential rows.
-    if (sessionManager.isActive(key)) {
-      try {
-        await sessionManager.stop(key);
-      } catch (e) {
-        logger.warn(`[bot.service] deleteBot: failed to stop ${key}`, {
-          error: e,
-        });
-      }
+    try {
+      await sessionManager.stop(key);
+    } catch (e) {
+      logger.warn(`[bot.service] deleteBot: failed to stop ${key}`, { error: e });
     }
     await sessionManager.unregister(key);
 

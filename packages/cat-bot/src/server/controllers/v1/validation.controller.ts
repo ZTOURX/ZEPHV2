@@ -236,7 +236,10 @@ export async function validateFacebookMessenger(
       });
 
       // Use non-null assertion since appstate has been validated above
-      const { api } = await startBot({ appstate: appstate! }, sessionLogger);
+      const { api } = await startBot(
+        { appstate: appstate!, sessionId: `validation-${Date.now()}` },
+        sessionLogger,
+      );
 
       const botId = api.getCurrentUserID();
 
