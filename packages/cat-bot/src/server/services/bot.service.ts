@@ -287,29 +287,76 @@ export class BotService {
         await sessionManager.unregister(key);
       }
     } else {
-      // Credentials changed — auto-restart so new tokens take effect immediately
-      // rather than waiting for a manual dashboard restart.
-      if (isActive || isCurrentlyRetrying) {
-        // abortRetry() cancels any live back-off loop before the restart; it is a
-        // no-op when the session is active-and-running (not retrying).
-        sessionManager.abortRetry(key);
-        // Wait for any in-progress boot to release its lock before restarting — without
-        // this wait, abortRetry() on a mid-boot session (isLocked=true) causes restartBot
-        // to throw BusyError that the catch below silently swallowed, leaving the session
-        // running forever on the old credentials after the locked boot completed.
-        // Fire-and-forget: HTTP response must not block on platform transport boot time.
-        void sessionManager
-          .waitForUnlock(key, 15_000)
-          .then(() => this.restartBot(userId, sessionId))
-          .catch((err) => {
-            logger.error(
-              '[bot.service] Auto-restart on credential update failed (non-fatal)',
-              { error: err },
-            );
-          });
+      if (platformStr === Platforms.FacebookMessenger) {
+        // FB Messenger credential update: STOP the session instead of auto-restarting.
+        //
+        // Auto-restart is unsafe for FB Messenger because of two compounding hazards:
+        //
+        //   1. Module-level sessionStateRegistry (facebook-messenger/index.ts) preserves
+        //      the stale FcaApi handle across closure recreations.  A new listener born
+        //      from spawnDynamicSession() inherits that handle; if the old MQTT connection
+        //      has not fully torn down yet, both the old and new listeners share the same
+        //      underlying FCA session and emit onto globalEmitter simultaneously.
+        //
+        //   2. The prefix variable captured in each MQTT listenMqtt callback is
+        //      boot()-local.  When two closures race during the restart window, events
+        //      arriving on the old MQTT connection carry the old prefix but are routed
+        //      through the new session's native context — causing two different users'
+        //      sessions (with different prefixes) to appear merged on a single appstate.
+        //
+        // Requiring a manual Start after credential changes gives the user a clean slate:
+        // the old MQTT connection is fully closed and the stale lifecycle closure is evicted
+        // before any new listener can boot, eliminating the race entirely.
+        if (isActive || isCurrentlyRetrying) {
+          sessionManager.abortRetry(key);
+          void sessionManager
+            .waitForUnlock(key, 15_000)
+            .then(async () => {
+              try {
+                // stop() → stopFn → l.stop() → stopListeningAsync() + markInactive().
+                // markInactive() updates isRunning=false in the DB so the dashboard
+                // reflects the stopped state without an extra botRepo call here.
+                await sessionManager.stop(key);
+              } catch {
+                // Already stopped or not registered — proceed to unregister
+              }
+              // Evict the stale lifecycle closure so the next Start spawns fresh.
+              await sessionManager.unregister(key);
+            })
+            .catch((err) => {
+              logger.error(
+                '[bot.service] FB Messenger stop-on-credential-update failed (non-fatal)',
+                { error: err },
+              );
+            });
+        } else {
+          // Session already at rest — evict the stale lifecycle closure.
+          await sessionManager.unregister(key);
+        }
       } else {
-        // Session was intentionally stopped — only evict the stale lifecycle closure.
-        await sessionManager.unregister(key);
+        // All other platforms: auto-restart so new tokens take effect immediately.
+        if (isActive || isCurrentlyRetrying) {
+          // abortRetry() cancels any live back-off loop before the restart; it is a
+          // no-op when the session is active-and-running (not retrying).
+          sessionManager.abortRetry(key);
+          // Wait for any in-progress boot to release its lock before restarting — without
+          // this wait, abortRetry() on a mid-boot session (isLocked=true) causes restartBot
+          // to throw BusyError that the catch below silently swallowed, leaving the session
+          // running forever on the old credentials after the locked boot completed.
+          // Fire-and-forget: HTTP response must not block on platform transport boot time.
+          void sessionManager
+            .waitForUnlock(key, 15_000)
+            .then(() => this.restartBot(userId, sessionId))
+            .catch((err) => {
+              logger.error(
+                '[bot.service] Auto-restart on credential update failed (non-fatal)',
+                { error: err },
+              );
+            });
+        } else {
+          // Session was intentionally stopped — only evict the stale lifecycle closure.
+          await sessionManager.unregister(key);
+        }
       }
     }
   }
