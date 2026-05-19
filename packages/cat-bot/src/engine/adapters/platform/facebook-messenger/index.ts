@@ -226,38 +226,60 @@ export function createFacebookMessengerListener(
           listenerInstances = fcaApi.listenMqtt((err, rawEvent, state) => {
             if (err) {
               sessionLogger.error('[facebook-messenger] MQTT error', {
-                error: err,
-              });
+                    error: err,
+                  });
 
-              // Auth errors from MQTT (e.g. account_inactive / not_logged_in) mean the
-              // fca-unofficial session cookie was invalidated server-side. Flag for
-              // re-login then reject with a RETRYABLE error so the platform runner
-              // continues its exponential-backoff loop. The next boot() sees
-              // isInvalidSession=true and calls startBot() for a fresh fca login.
-              // WHY NOT reject(err): the raw auth error causes shouldRetry → isAuthError
-              // to return false, permanently halting the runner — no recovery ever
-              // occurs even though a new fca-unofficial login would succeed.
-              if (isAuthError(err)) {
-                sessionLogger.error(
-                  '[facebook-messenger] MQTT auth error — session flagged for re-login on next retry',
+                  // Auth errors from MQTT (e.g. account_inactive / not_logged_in) mean the
+                  // fca-unofficial session cookie was invalidated server-side. Flag for
+                  // re-login so the next boot() calls startBot() for a fresh fca login.
+                  // Pre-connect: boot() is still pending — reject with a retryable error so
+                  // the runner's backoff loop picks it up. Post-connect: boot() already
+                  // resolved and reject() is a no-op — re-enter the runner via emitter.start()
+                  // so the managed retry fires just like Discord, Telegram, and Facebook Page.
+                  // WHY NOT reject(err): the raw auth error causes shouldRetry → isAuthError
+                  // to return false, permanently halting the runner — no recovery ever
+                  // occurs even though a new fca-unofficial login would succeed.
+                  if (isAuthError(err)) {
+                    sessionLogger.error(
+                      '[facebook-messenger] MQTT auth error — session flagged for re-login on next retry',
                   { error: err },
                 );
                 isInvalidSession = true;
                 // Null before persistState() so the registry snapshot also carries null,
                 // giving a belt-and-suspenders guarantee that needsLogin evaluates true
-                // on the next boot() even if isInvalidSession were somehow cleared.
-                activeFcaApi = null;
-                persistState(); // saves isInvalidSession=true and activeFcaApi=null
-                void sessionManager.markInactive(smKey);
-                reject(
-                  new Error(
-                    '[facebook-messenger] MQTT session inactive — re-login scheduled for next retry',
-                  ),
-                );
-                return;
-              }
+                    // on the next boot() even if isInvalidSession were somehow cleared.
+                    activeFcaApi = null;
+                    persistState(); // saves isInvalidSession=true and activeFcaApi=null
+                    void sessionManager.markInactive(smKey);
+                    if (!mqttConnected) {
+                      // Pre-connect: boot() Promise is still pending — reject with a retryable
+                      // error so the platform runner's exponential-backoff loop picks it up.
+                      reject(
+                        new Error(
+                          '[facebook-messenger] MQTT session inactive — re-login scheduled for next retry',
+                        ),
+                      );
+                    } else {
+                      // Post-connect: boot() already resolved; runner has no pending Promise.
+                      // Re-enter the runner manually — isInvalidSession=true + activeFcaApi=null
+                      // (set above) guarantee the next boot() triggers a full startBot() re-login
+                      // instead of the fast-path MQTT reattach. Mirrors the recoverable-error
+                      // post-connect restart pattern on the lines below.
+                      const prev = listenerInstances;
+                      listenerInstances = null;
+                      void (async () => {
+                        try {
+                          if (prev) await prev.stopListeningAsync();
+                        } catch {
+                          /* non-fatal — proceed to restart regardless */
+                        }
+                        void emitter.start();
+                      })();
+                    }
+                    return;
+                  }
 
-              // Burst-error guard — only one reconnect attempt in flight at a time.
+                  // Burst-error guard — only one reconnect attempt in flight at a time.
               if (reconnecting) return;
               reconnecting = true;
 
