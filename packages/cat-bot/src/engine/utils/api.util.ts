@@ -56,10 +56,14 @@ const APIs: Record<string, ApiEntry> = {
     baseURL: 'https://www.neoapis.xyz',
   },
   nexray: {
-    baseURL: 'https://api.nexray.web.id',
+    baseURL: 'https://api.nexray.eu.cc',
   },
   popcat: {
     baseURL: 'https://api.popcat.xyz',
+  },
+  sanka: {
+     baseURL: 'https://www.sankavolereii.my.id',
+     APIKey: 'planaai'
   },
   omegatech: {
     baseURL: 'https://omegatech-api.dixonomega.tech',
