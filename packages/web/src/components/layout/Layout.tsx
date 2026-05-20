@@ -56,7 +56,7 @@ export default function Layout() {
       <header className="sticky top-0 z-fixed bg-surface/80 backdrop-blur border-b border-outline-variant">
         <nav
           className={cn(
-            'relative max-w-6xl mx-auto flex items-center',
+            'relative max-w-[var(--layout-nav-max)] mx-auto flex items-center',
             H_HEIGHT,
             H_PX,
           )}
@@ -157,7 +157,7 @@ export default function Layout() {
               '[animation:fade-in-down_150ms_var(--easing-standard-decelerate)_both]',
             )}
           >
-            <div className="max-w-6xl mx-auto px-6 py-4 flex flex-col gap-2">
+            <div className="max-w-[var(--layout-nav-max)] mx-auto px-6 py-4 flex flex-col gap-2">
               {isAuthenticated ? (
                 <Button
                   as={Link}

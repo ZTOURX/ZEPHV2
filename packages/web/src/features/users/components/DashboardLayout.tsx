@@ -313,7 +313,7 @@ export default function DashboardLayout() {
       <header className="sticky top-0 z-sticky bg-surface border-b border-outline-variant backdrop-blur">
         <nav
           className={cn(
-            'relative max-w-7xl mx-auto flex items-center',
+            'relative max-w-[var(--layout-nav-max)] mx-auto flex items-center',
             H_HEIGHT,
             H_PX,
           )}
@@ -390,7 +390,7 @@ export default function DashboardLayout() {
               '[animation:fade-in-down_150ms_var(--easing-standard-decelerate)_both]',
             )}
           >
-            <div className="max-w-7xl mx-auto px-4 py-3 flex flex-col">
+            <div className="max-w-[var(--layout-nav-max)] mx-auto px-4 py-3 flex flex-col">
               {navItems.map((item) => (
                 <MobileNavLink
                   key={item.href}
@@ -450,7 +450,7 @@ export default function DashboardLayout() {
         )}
       </header>
 
-      <main className="flex-1 p-6 max-w-7xl w-full mx-auto">
+      <main className="flex-1 p-[var(--layout-main-p)] max-w-[var(--layout-content-max)] w-full mx-auto">
         <Outlet />
       </main>
     </div>

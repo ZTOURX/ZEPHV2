@@ -329,7 +329,17 @@ export default {
         'emphasized-accelerate': 'var(--easing-emphasized-accelerate)',
       },
 
-      // ==================== OPACITY (State Layers) ====================
+      // ==================== SCREENS (Desktop-only extensions) ====================
+      // Extends Tailwind's default breakpoints with ultra-wide desktop tiers.
+      // These are min-width breakpoints — purely additive, no mobile impact.
+      // Use with 3xl:, 4xl:, 5xl: prefixes for progressive desktop scaling.
+      screens: {
+        '3xl': '1920px', // Full HD / ultrawide monitors
+        '4xl': '2560px', // QHD / 4K displays
+        '5xl': '3840px', // 8K displays
+      },
+
+    // ==================== OPACITY (State Layers) ====================
       opacity: {
         'state-hover': 'var(--state-hover-opacity)',
         'state-focus': 'var(--state-focus-opacity)',

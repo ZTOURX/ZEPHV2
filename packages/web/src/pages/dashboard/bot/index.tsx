@@ -40,6 +40,22 @@ function UptimeDisplay({ startedAt }: { startedAt: number }) {
   return <>{uptime}</>
 }
 
+// ── Traffic-light cluster ──────────────────────────────────────────────────────
+/**
+ * macOS-style window control dots rendered in the terminal chrome bar.
+ * Purely decorative — no click handlers, matching the existing fake dashboard
+ * widget on the Home page for visual consistency.
+ */
+function TrafficLights() {
+  return (
+    <div className="flex items-center gap-1.5 shrink-0" aria-hidden="true">
+      <span className="h-3 w-3 rounded-full bg-[#FF5F57]" />
+      <span className="h-3 w-3 rounded-full bg-[#FEBC2E]" />
+      <span className="h-3 w-3 rounded-full bg-[#28C840]" />
+    </div>
+  )
+}
+
 // ── Sidebar metric card ────────────────────────────────────────────────────────
 function InfoCard({
   icon,
@@ -132,7 +148,9 @@ export default function BotConsolePage() {
 
       <div className="flex flex-col lg:flex-row gap-4 items-start">
         <div className="w-full lg:flex-1 min-w-0 rounded-lg overflow-hidden">
-          <div className="flex items-center justify-between gap-2 px-4 py-2.5 bg-black border-b border-gray-800">
+          {/* Terminal chrome bar — traffic lights on the left, title centred */}
+          <div className="flex items-center gap-3 px-4 py-2.5 bg-black border-b border-gray-800">
+            <TrafficLights />
             <div className="flex items-center gap-2 min-w-0">
               <Terminal className="h-3.5 w-3.5 text-gray-400 shrink-0" />
               <span className="text-label-sm text-gray-400 font-mono truncate">

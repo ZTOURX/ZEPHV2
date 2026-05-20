@@ -292,4 +292,92 @@
   --state-dragged-opacity: 0.16;
   --state-disabled-opacity: 0.38;
   --state-disabled-container-opacity: 0.12;
+
+  /* ==================== DESKTOP LAYOUT SCALING ==================== */
+  /*
+   * Fluid layout tokens that scale proportionally across all desktop viewport
+   * widths — from 1024 px laptop up to 8 K displays. No mobile or tablet
+   * breakpoints are touched here; these vars are only meaningful at ≥ 1024 px.
+   *
+   * Usage in components (Tailwind arbitrary value syntax):
+   *   max-w-[var(--layout-content-max)]   — primary content area cap
+   *   max-w-[var(--layout-nav-max)]       — header / nav band cap
+   *   w-[var(--layout-sidebar-w)]         — admin sidebar width
+   *   p-[var(--layout-main-p)]            — dashboard main content padding
+   *   px-[var(--layout-section-px)]       — landing-page section h-padding
+   *   py-[var(--layout-section-py-lg)]    — landing-page large section v-padding
+   */
+
+  /* Baseline — 1024 px–1279 px (laptop) */
+  --layout-content-max: 72rem;        /* 1152 px */
+  --layout-nav-max: 72rem;
+  --layout-sidebar-w: 16rem;          /* 256 px */
+  --layout-main-p: 1.5rem;            /* 24 px  — matches p-6 */
+  --layout-section-px: 1.5rem;        /* 24 px  — matches px-6 */
+  --layout-section-py-lg: 6rem;       /* 96 px  — matches py-24 */
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Desktop breakpoint overrides — desktop-only, no mobile/tablet impact.
+   Each block narrows or widens the layout proportionally, ensuring the UI
+   breathes elegantly on every monitor from 1280 px to 8 K.
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* Standard desktop — 1280 px–1535 px */
+@media (min-width: 1280px) {
+  :root {
+    --layout-content-max: 80rem;     /* 1280 px */
+    --layout-nav-max: 80rem;
+    --layout-main-p: 2rem;           /* 32 px */
+    --layout-section-px: 2rem;       /* 32 px */
+    --layout-section-py-lg: 7rem;    /* 112 px */
+  }
+}
+
+/* Large desktop — 1536 px–1919 px (≈ 1440 p / 1600 p monitors) */
+@media (min-width: 1536px) {
+  :root {
+    --layout-content-max: 90rem;     /* 1440 px */
+    --layout-nav-max: 90rem;
+    --layout-sidebar-w: 17.5rem;     /* 280 px */
+    --layout-main-p: 2.5rem;         /* 40 px */
+    --layout-section-px: 3rem;       /* 48 px */
+    --layout-section-py-lg: 8rem;    /* 128 px */
+  }
+}
+
+/* Full HD / ultrawide — 1920 px–2559 px */
+@media (min-width: 1920px) {
+  :root {
+    --layout-content-max: 112rem;    /* 1792 px */
+    --layout-nav-max: 112rem;
+    --layout-sidebar-w: 19rem;       /* 304 px */
+    --layout-main-p: 3rem;           /* 48 px */
+    --layout-section-px: 4rem;       /* 64 px */
+    --layout-section-py-lg: 10rem;   /* 160 px */
+  }
+}
+
+/* QHD / 4 K — 2560 px–3839 px */
+@media (min-width: 2560px) {
+  :root {
+    --layout-content-max: 150rem;    /* 2400 px */
+    --layout-nav-max: 150rem;
+    --layout-sidebar-w: 22rem;       /* 352 px */
+    --layout-main-p: 4rem;           /* 64 px */
+    --layout-section-px: 5rem;       /* 80 px */
+    --layout-section-py-lg: 12rem;   /* 192 px */
+  }
+}
+
+/* 8 K — 3840 px+ */
+@media (min-width: 3840px) {
+  :root {
+    --layout-content-max: 210rem;    /* 3360 px */
+    --layout-nav-max: 210rem;
+    --layout-sidebar-w: 28rem;       /* 448 px */
+    --layout-main-p: 5rem;           /* 80 px */
+    --layout-section-px: 6rem;       /* 96 px */
+    --layout-section-py-lg: 15rem;   /* 240 px */
+  }
 }

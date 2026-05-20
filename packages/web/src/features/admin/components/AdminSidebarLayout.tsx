@@ -389,7 +389,7 @@ export default function AdminSidebarLayout() {
           </div>
         </header>
 
-        <main className="flex-1 p-6 max-w-7xl w-full mx-auto">
+        <main className="flex-1 p-[var(--layout-main-p)] max-w-[var(--layout-content-max)] w-full mx-auto">
           <Outlet />
         </main>
       </div>

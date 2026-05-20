@@ -10,23 +10,43 @@
  *   4. Admin Sidebar Header         (AdminSidebarLayout.tsx — sidebar strip)
  *
  * A single change here propagates atomically to every header surface.
+ *
+ * Desktop Responsiveness
+ * ──────────────────────
+ * Tokens that carry responsive Tailwind prefixes (xl:, 2xl:, 3xl:, 4xl:)
+ * scale purely at desktop widths (≥ 1024 px). No mobile or tablet breakpoints
+ * are introduced here. Tokens that reference CSS custom properties
+ * (var(--layout-*)) derive their values from the @media blocks defined in
+ * styles/tokens.css for fluid, continuous scaling across all desktop sizes.
  */
 
 // ─── Structural ────────────────────────────────────────────────────────────
 
-/** Vertical footprint: 64 px — standard header height. */
-export const H_HEIGHT = 'h-16' as const
+/**
+ * Vertical footprint — 64 px baseline.
+ * Scales up at ultra-wide viewports (3xl = 1920 px, 4xl = 2560 px).
+ */
+export const H_HEIGHT =
+  'h-16 3xl:h-[4.5rem] 4xl:h-20' as const
 
-/** Horizontal padding on all nav / header containers. */
-export const H_PX = 'px-6' as const
+/**
+ * Horizontal padding on all nav / header containers.
+ * Progressively wider on larger desktop screens; mobile stays at px-6.
+ */
+export const H_PX =
+  'px-6 xl:px-8 2xl:px-10 3xl:px-14 4xl:px-20' as const
 
-/** Desktop sidebar width (admin). */
-export const H_SIDEBAR_WIDTH = 'w-64' as const
+/**
+ * Desktop sidebar width (admin).
+ * Driven by the --layout-sidebar-w CSS custom property so the sidebar grows
+ * continuously as the viewport widens, matching the content area's scaling.
+ */
+export const H_SIDEBAR_WIDTH = 'w-[var(--layout-sidebar-w)]' as const
 
 // ─── Logo & Brand ──────────────────────────────────────────────────────────
 
-/** Cat logo icon dimensions. */
-export const H_LOGO_ICON = 'h-5 w-5' as const
+/** Cat logo icon dimensions. Scales up at ultra-wide viewports. */
+export const H_LOGO_ICON = 'h-5 w-5 3xl:h-6 3xl:w-6 4xl:h-7 4xl:w-7' as const
 
 /** Brand / page-title typography. */
 export const H_BRAND_TEXT = 'text-label-lg font-semibold' as const
@@ -40,14 +60,13 @@ export const H_NAV_ITEM =
 // ─── Mobile Navigation Items ───────────────────────────────────────────────
 
 /** Base classes for mobile drawer nav links (full-width touch targets). */
-// Mobile nav — text-label-lg matches the unified header text scale
 export const H_NAV_ITEM_MOBILE =
   'flex items-center gap-3 w-full px-4 py-3 rounded-xl text-label-lg font-medium transition-colors duration-fast' as const
 
 // ─── User / Admin Avatar ───────────────────────────────────────────────────
 
-/** Circular avatar dimensions. */
-export const H_AVATAR = 'h-9 w-9' as const
+/** Circular avatar dimensions. Scales at ultra-wide viewports. */
+export const H_AVATAR = 'h-9 w-9 3xl:h-10 3xl:w-10 4xl:h-11 4xl:w-11' as const
 
 /** Typography inside avatar circle and dropdown header. */
 export const H_AVATAR_TEXT = 'text-label-lg font-semibold' as const
@@ -59,7 +78,7 @@ export const H_MENU_TRIGGER =
   'inline-flex items-center gap-2 rounded-lg px-3 py-2 text-label-lg font-medium' as const
 
 /** Chevron icon in menu triggers. */
-export const H_CHEVRON = 'h-4 w-4' as const
+export const H_CHEVRON = 'h-4 w-4 3xl:h-5 3xl:w-5' as const
 
 // ─── Sidebar Navigation (Admin) ────────────────────────────────────────────
 
@@ -68,7 +87,7 @@ export const H_SIDEBAR_NAV =
   'flex items-center gap-3 px-3 py-2.5 rounded-xl text-label-lg font-medium transition-colors duration-fast' as const
 
 /** Icon size inside sidebar nav items. */
-export const H_SIDEBAR_ICON = 'h-4 w-4 shrink-0' as const
+export const H_SIDEBAR_ICON = 'h-4 w-4 shrink-0 3xl:h-5 3xl:w-5' as const
 
 // ─── Dropdown Panel ────────────────────────────────────────────────────────
 
