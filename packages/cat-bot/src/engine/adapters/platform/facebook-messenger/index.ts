@@ -241,6 +241,30 @@ export function createFacebookMessengerListener(
           );
         }
         const { api } = await startBot({ appstate }, sessionLogger);
+        // Identity validation — confirm the logged-in account matches the expected FB
+        // identity. fca-cat-bot maintains module-level MQTT state; a concurrent login()
+        // for a different account can silently overwrite the internal connection context,
+        // merging this session onto another account's transport (the root cause of the
+        // 3-sessions-into-1-account collision). Throwing here keeps the runner's retry
+        // loop as the sole recovery path — no zombie sessions can accumulate.
+        const loggedInId = String(api.getCurrentUserID());
+        if (activeFbAccountId !== null && loggedInId !== activeFbAccountId) {
+          sessionLogger.error(
+            `[facebook-messenger] Identity mismatch: expected fbAccountId=${activeFbAccountId}` +
+              ` but api.getCurrentUserID()=${loggedInId}` +
+              ` — library-level contamination detected; forcing re-login on retry.`,
+          );
+          isInvalidSession = true;
+          activeFcaApi = null;
+          persistState();
+          throw new Error(
+            `[facebook-messenger] FB account identity mismatch:` +
+              ` expected ${activeFbAccountId}, got ${loggedInId}`,
+          );
+        }
+        // Confirm and persist identity. Also seeds activeFbAccountId for sessions where
+        // the initial c_user parse returned null (non-standard appstate format).
+        activeFbAccountId = loggedInId;
         activeFcaApi = api;
         activeAppstate = appstate;
         isInvalidSession = false;
