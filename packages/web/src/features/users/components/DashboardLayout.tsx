@@ -319,7 +319,7 @@ export default function DashboardLayout() {
           )}
           aria-label="Dashboard navigation"
         >
-          {/* Left: logo + desktop nav links */}
+          {/* Left: logo + desktop brand + nav links */}
           <div className="flex items-center gap-2 shrink-0">
             <UILink
               as={Link}
@@ -331,6 +331,17 @@ export default function DashboardLayout() {
               <Cat className={H_LOGO_ICON} />
             </UILink>
 
+            {/* Desktop: brand text — left-aligned next to the logo */}
+            <Link
+              to={ROUTES.DASHBOARD.ROOT}
+              className={cn(
+                'hidden md:inline-flex text-primary hover:opacity-80 transition-opacity duration-fast outline-none focus-visible:ring-2 focus-visible:ring-primary/20 rounded-sm',
+                H_BRAND_TEXT,
+              )}
+            >
+              Cat-Bot
+            </Link>
+
             <div className="hidden md:flex items-center gap-0.5 ml-2">
               {navItems.map((item) => (
                 <NavLink key={item.href} item={item} />
@@ -338,8 +349,8 @@ export default function DashboardLayout() {
             </div>
           </div>
 
-          {/* Centre: brand */}
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none">
+          {/* Mobile: brand — absolutely centred (desktop link above takes over at md+) */}
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none md:hidden">
             <Link
               to={ROUTES.DASHBOARD.ROOT}
               className={cn(

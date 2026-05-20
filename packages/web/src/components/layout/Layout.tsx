@@ -73,8 +73,19 @@ export default function Layout() {
             <Cat className={H_LOGO_ICON} />
           </UILink>
 
-          {/* Centre: brand — pointer-events-none wrapper prevents click blocking */}
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none">
+          {/* Desktop: brand text — left-aligned, immediately after the logo */}
+          <Link
+            to="/"
+            className={cn(
+              'hidden md:inline-flex ml-2 text-primary hover:opacity-80 transition-opacity duration-fast outline-none focus-visible:ring-2 focus-visible:ring-primary/20 rounded-sm',
+              H_BRAND_TEXT,
+            )}
+          >
+            Cat-Bot
+          </Link>
+
+          {/* Mobile: brand — absolutely centred (desktop link above takes over at md+) */}
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none md:hidden">
             <Link
               to="/"
               className={cn(

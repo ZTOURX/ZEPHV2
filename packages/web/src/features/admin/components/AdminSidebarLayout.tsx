@@ -376,8 +376,13 @@ export default function AdminSidebarLayout() {
             onClick={() => setMobileOpen(true)}
           />
 
-          {/* Page title — absolutely centred */}
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          {/* Desktop: page title — left-aligned */}
+          <span className={cn(H_BRAND_TEXT, "hidden md:inline-flex text-on-surface select-none tracking-wide")}>
+            {currentLabel}
+          </span>
+
+          {/* Mobile: page title — absolutely centred */}
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none md:hidden">
             <span className={cn(H_BRAND_TEXT, "text-on-surface select-none tracking-wide")}>
               {currentLabel}
             </span>
