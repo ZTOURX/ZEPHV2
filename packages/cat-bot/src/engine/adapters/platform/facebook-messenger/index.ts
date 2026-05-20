@@ -85,6 +85,32 @@ interface FbMessengerSessionState {
   activeFcaApi: FcaApi | null;
   activeAppstate: string | null;
   isInvalidSession: boolean;
+  // Stable Facebook numeric user ID (the c_user cookie value) — anchors this state
+  // entry to a specific FB account so a reused (userId, sessionId) pair with a
+  // different appstate never inherits the FcaApi handle of the previous account.
+  fbAccountId: string | null;
+}
+
+/**
+ * Extracts the Facebook numeric user ID (c_user cookie) from a JSON-serialised
+ * fca-unofficial appstate. Returns null when malformed or the cookie is absent.
+ *
+ * WHY c_user: it is the stable, unique identity for a Facebook account — it never
+ * changes across session refreshes (unlike xs, datr, etc.). Including it in the
+ * state registry key ensures that swapping appstates (different c_user) on the same
+ * system (userId, sessionId) produces a fresh registry entry rather than reusing
+ * the API handle from the previous account, preventing cross-account state bleed.
+ */
+function extractFbAccountId(appstateJson: string): string | null {
+  try {
+    const cookies = JSON.parse(appstateJson) as Array<{
+      key: string;
+      value: string;
+    }>;
+    return cookies.find((c) => c.key === 'c_user')?.value ?? null;
+  } catch {
+    return null;
+  }
 }
 
 const sessionStateRegistry = new Map<string, FbMessengerSessionState>();
@@ -116,14 +142,24 @@ export function createFacebookMessengerListener(
 
   // Hoisted to factory scope — constant for the listener's lifetime.
   const smKey = `${config.userId}:${Platforms.FacebookMessenger}:${config.sessionId}`;
-  // Registry key — stable identity for this session regardless of closure recreation.
-  const stateKey = `${config.userId}:${config.sessionId}`;
+  // Parse the stable FB account identity from the initial appstate so the registry key
+  // is anchored to the actual Facebook account, not only the system session handle.
+  // When credentials are swapped via the dashboard (different c_user in the new
+  // appstate), the key changes — the new closure never inherits stale FcaApi state.
+  const initialFbAccountId = extractFbAccountId(config.appstate) ?? '';
+  // Registry key — includes the FB account identity (c_user) as a discriminator so the
+  // same (userId, sessionId) pair with a different appstate always starts fresh.
+  const stateKey = `${config.userId}:${config.sessionId}:${initialFbAccountId}`;
 
   // Reuse existing session state when the closure is recreated (slow-path restart).
   const existingState = sessionStateRegistry.get(stateKey);
   let activeFcaApi: FcaApi | null = existingState?.activeFcaApi ?? null;
   let activeAppstate: string | null = existingState?.activeAppstate ?? null;
   let isInvalidSession: boolean = existingState?.isInvalidSession ?? false;
+  // Confirmed FB user ID post-login; validated after startBot() to detect library-level
+  // account contamination. Seeds from the initial c_user parse for early validation.
+  let activeFbAccountId: string | null =
+    existingState?.fbAccountId ?? (initialFbAccountId || null);
   // Hoisted to factory scope so emitter.stop() can call fbClient.disconnect() — declaring
   // inside boot() would make it inaccessible from the stop closure (different stack frame).
   let fbClient: any = null;
@@ -137,6 +173,7 @@ export function createFacebookMessengerListener(
       activeFcaApi,
       activeAppstate,
       isInvalidSession,
+      fbAccountId: activeFbAccountId,
     });
   }
 
@@ -204,6 +241,30 @@ export function createFacebookMessengerListener(
           );
         }
         const { api } = await startBot({ appstate }, sessionLogger);
+        // Identity validation — confirm the logged-in account matches the expected FB
+        // identity. fca-cat-bot maintains module-level MQTT state; a concurrent login()
+        // for a different account can silently overwrite the internal connection context,
+        // merging this session onto another account's transport (the root cause of the
+        // 3-sessions-into-1-account collision). Throwing here keeps the runner's retry
+        // loop as the sole recovery path — no zombie sessions can accumulate.
+        const loggedInId = String(api.getCurrentUserID());
+        if (activeFbAccountId !== null && loggedInId !== activeFbAccountId) {
+          sessionLogger.error(
+            `[facebook-messenger] Identity mismatch: expected fbAccountId=${activeFbAccountId}` +
+              ` but api.getCurrentUserID()=${loggedInId}` +
+              ` — library-level contamination detected; forcing re-login on retry.`,
+          );
+          isInvalidSession = true;
+          activeFcaApi = null;
+          persistState();
+          throw new Error(
+            `[facebook-messenger] FB account identity mismatch:` +
+              ` expected ${activeFbAccountId}, got ${loggedInId}`,
+          );
+        }
+        // Confirm and persist identity. Also seeds activeFbAccountId for sessions where
+        // the initial c_user parse returned null (non-standard appstate format).
+        activeFbAccountId = loggedInId;
         activeFcaApi = api;
         activeAppstate = appstate;
         isInvalidSession = false;
@@ -377,10 +438,13 @@ export function createFacebookMessengerListener(
             const native = {
               userId: config.userId,
               sessionId: config.sessionId,
-              platform: Platforms.FacebookMessenger,
-              api: fcaApi,
-              event: rawEvent,
-            };
+            platform: Platforms.FacebookMessenger,
+            api: fcaApi,
+            event: rawEvent,
+            // Carry the confirmed FB account ID so downstream command handlers can
+            // optionally validate event ownership without an extra API call.
+            fbAccountId: activeFbAccountId,
+          };
 
             // Guard routeRawEvent so a malformed payload never throws through fca-unofficial's
             // synchronous callback and silently kills the entire MQTT connection.
@@ -505,6 +569,8 @@ export function createFacebookMessengerListener(
                 api: activeFcaApi,
                 fbClient,
                 event,
+                // Same identity propagation as the MQTT path for diagnostic parity.
+                fbAccountId: activeFbAccountId,
               };
               routeFbClientEvent(event, apiWrapper, native, emitter, prefix);
             } catch (routeErr) {
