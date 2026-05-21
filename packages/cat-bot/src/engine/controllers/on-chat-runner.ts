@@ -34,12 +34,8 @@
 import type { BaseCtx, CommandMap } from '@/engine/types/controller.types.js';
 // Platform filter — respects config.platform[] declared by each command module
 import { isPlatformAllowed } from '@/engine/modules/platform/platform-filter.util.js';
-// Role and ban enforcement — same repo functions as onCommand middleware but applied
-import { isThreadAdmin } from '@/engine/repos/threads.repo.js';
-import { isBotAdmin, isBotPremium } from '@/engine/repos/credentials.repo.js';
-import { Role, type RoleLevel } from '@/engine/constants/role.constants.js';
+// Ban enforcement — silently skip banned senders and threads in the onChat fan-out
 import { isUserBanned, isThreadBanned } from '@/engine/repos/banned.repo.js';
-import { isSystemAdmin } from '@/engine/repos/system-admin.repo.js';
 
 /**
  * Fans out to every command's onChat handler — used for passive middleware
@@ -73,74 +69,26 @@ export async function runOnChat(
   const senderID = (ctx.event['senderID'] ?? ctx.event['userID'] ?? '') as string;
   const threadID = (ctx.event['threadID'] ?? '') as string;
 
-  // Pre-resolve the sender's effective role tier and ban status ONCE before the fan-out.
-  // Comparing each module's config.role against this cached value avoids N independent
-  // DB round-trips for N modules with onChat handlers on every message.
-  // Fail-open: on any DB error the sender is treated as ANYONE with no bans so a
-  // transient DB outage never silently suppresses legitimate passive handlers.
-  let resolvedRole: RoleLevel = Role.ANYONE;
+  // Resolve ban status ONCE before the fan-out — two parallel DB reads instead of the
+  // previous 4–5 sequential reads (isBotAdmin + isSystemAdmin + isBotPremium + isThreadAdmin
+  // + ban checks). onChat is a passive observer; role enforcement is intentionally absent here.
+  // Fail-open: on any DB error both flags remain false so a transient outage never
+  // silently suppresses legitimate passive handlers.
   let userBanned = false;
   let threadBanned = false;
 
   if (sessionUserId && sessionId && senderID) {
     try {
-      // Check from highest privilege downward — first match sets the effective tier and stops.
-      // Bot-admin and system-admin status also bypass the ban check entirely, mirroring
-      // enforceNotBanned in on-command.middleware.ts where admins retain full access
-      // regardless of ban table state — the same contract must hold for passive handlers.
-      const adminResult = await isBotAdmin(
-        sessionUserId,
-        platform,
-        sessionId,
-        senderID,
-      );
-      // Avoid the isSystemAdmin DB call when isBotAdmin already returned true —
-      // the short-circuit mirrors the pattern in enforcePermission middleware.
-      const sysAdminResult = adminResult
-        ? false
-        : await isSystemAdmin(senderID);
-
-      if (sysAdminResult) {
-        resolvedRole = Role.SYSTEM_ADMIN;
-        // No ban checks for system admins — full access regardless of ban table state
-      } else if (adminResult) {
-        resolvedRole = Role.BOT_ADMIN;
-        // No ban checks for bot admins — same bypass as enforceNotBanned in onCommand
-      } else {
-        // Non-admin: resolve premium status, thread-admin status, and both ban flags in
-        // parallel — all four results are needed before the per-module guard loop runs,
-        // and running them concurrently collapses four DB round-trips into one wait.
-        const [
-          premiumResult,
-          threadAdminResult,
-          userBannedResult,
-          threadBannedResult,
-        ] = await Promise.all([
-          isBotPremium(sessionUserId, platform, sessionId, senderID),
-          threadID
-            ? isThreadAdmin(threadID, senderID)
-            : Promise.resolve(false),
-          isUserBanned(sessionUserId, platform, sessionId, senderID),
-          threadID
-            ? isThreadBanned(sessionUserId, platform, sessionId, threadID)
-            : Promise.resolve(false),
-        ]);
-
-        // PREMIUM (2) outranks THREAD_ADMIN (1) per truth table —
-        // both grant ANYONE + THREAD_ADMIN access, but PREMIUM additionally
-        // unlocks PREMIUM-gated onChat handlers. Resolve the higher tier when both are true.
-        if (premiumResult) {
-          resolvedRole = Role.PREMIUM;
-        } else if (threadAdminResult) {
-          resolvedRole = Role.THREAD_ADMIN;
-        }
-
-        userBanned = userBannedResult;
-        threadBanned = threadBannedResult;
-      }
+      const [userBannedResult, threadBannedResult] = await Promise.all([
+        isUserBanned(sessionUserId, platform, sessionId, senderID),
+        threadID
+          ? isThreadBanned(sessionUserId, platform, sessionId, threadID)
+          : Promise.resolve(false),
+      ]);
+      userBanned = userBannedResult;
+      threadBanned = threadBannedResult;
     } catch {
       // Fail-open: DB errors must never silently suppress legitimate onChat handlers.
-      // resolvedRole remains ANYONE and ban flags remain false — all modules run.
     }
   }
 
@@ -154,23 +102,11 @@ export async function runOnChat(
       // Skip modules that explicitly exclude this platform via config.platform[]
       if (!isPlatformAllowed(mod, ctx.native.platform)) continue;
 
-      // Silently skip banned senders — no response, consistent with the passive-observer
-      // contract of onChat. Admins always have resolvedRole ≥ BOT_ADMIN(3) and their
-      // ban flags are never set (userBanned/threadBanned resolved in the non-admin else
-      // branch above, which adminResult/sysAdminResult short-circuits skip entirely).
+      // Silently skip banned senders and threads — no reply sent, passive-observer contract.
       if (userBanned || threadBanned) continue;
-
-      // Silently skip modules whose required role exceeds the sender's effective tier.
-      // Simple numeric comparison is correct because the truth table is monotone:
-      //   SYSTEM_ADMIN(4) ≥ BOT_ADMIN(3) ≥ PREMIUM(2) ≥ THREAD_ADMIN(1) ≥ ANYONE(0).
-      // No response is sent — onChat is a passive observer, not an interactive dispatcher.
-      const cfg = mod['config'] as { role?: number } | undefined;
-      const requiredRole = cfg?.role ?? Role.ANYONE;
-      if (resolvedRole < requiredRole) continue;
 
       tasks.push(
         (mod['onChat'] as (ctx: BaseCtx) => Promise<void>)(ctx).catch(
-          (err: unknown) => console.error(`❌ onChat "${name}" failed`, err),
         ),
       );
     }
