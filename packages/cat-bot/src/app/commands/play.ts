@@ -8,8 +8,8 @@
  *
  * Response shape:
  *   {
- *     credit:   string   — API provider identifier
- *     version:  string   — API version string
+ *     credit:   string   — API provider identifier ("MJL")
+ *     version:  string   — API version string ("1.2.2")
  *     media: {
  *       mp4:  string     — direct MP4 video download URL
  *       mp3:  string     — direct MP3 audio download URL
@@ -17,10 +17,6 @@
  *     ApiCount: number   — total requests served by this API instance
  *     ms:       number   — server-side processing time in milliseconds
  *   }
- *
- * The command fetches the mp3 URL from the API response, streams it into a
- * buffer, and sends it as a named .mp3 attachment alongside a clean caption.
- * All network steps use AbortSignal.timeout() guards to prevent indefinite hangs.
  *
  * Aliases: /song, /music
  * Access:  ANYONE
@@ -43,16 +39,17 @@ const SEARCH_TIMEOUT_MS = 30_000;
 const DOWNLOAD_TIMEOUT_MS = 60_000;
 
 // ── API response type ──────────────────────────────────────────────────────────
+// Matches the exact shape returned by the API (verified against live response)
 
 interface YtDlpApiResponse {
-  credit: string;
-  version: string;
+  credit: string;    // e.g. "MJL"
+  version: string;   // e.g. "1.2.2"
   media: {
-    mp4: string;
-    mp3: string;
+    mp4: string;     // Direct MP4 video download URL
+    mp3: string;     // Direct MP3 audio download URL
   };
-  ApiCount: number;
-  ms: number;
+  ApiCount: number;  // Total requests served by this API instance
+  ms: number;        // Server-side processing time in milliseconds
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -73,11 +70,21 @@ function safeFilename(query: string): string {
 
 /**
  * Formats a duration in milliseconds to a human-readable string.
- * e.g. 10535 → "10.5s"
+ * e.g. 10535 → "10.5s" | 800 → "800ms"
  */
 function formatMs(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
   return `${(ms / 1000).toFixed(1)}s`;
+}
+
+/**
+ * Formats a byte count into a human-readable file size label.
+ * e.g. 2_097_152 → "2.0 MB" | 512_000 → "500 KB"
+ */
+function formatBytes(bytes: number): string {
+  const kb = Math.round(bytes / 1024);
+  if (kb >= 1024) return `${(kb / 1024).toFixed(1)} MB`;
+  return `${kb} KB`;
 }
 
 // ── Command configuration ──────────────────────────────────────────────────────
@@ -113,8 +120,6 @@ export const onCommand = async ({
   const query = args.join(' ').trim();
 
   // ── Loading indicator ──────────────────────────────────────────────────────
-  // Shown while the API processes the search + download — gives the user
-  // immediate feedback since audio fetches can take several seconds.
 
   const loadingId = (await chat.replyMessage({
     style: MessageStyle.MARKDOWN,
@@ -123,8 +128,8 @@ export const onCommand = async ({
 
   try {
     // ── Step 1: Fetch audio URLs from the search API ───────────────────────
-    // The API uses an empty-key query parameter: ?=<encoded query>
-    // This is the literal format required by this endpoint.
+    // NOTE: The endpoint uses a valueless key — the literal format is `?=<query>`.
+    // Example: /api/v2/q?=never+gonna+give+you+up
 
     const apiUrl = `${API_BASE}?=${encodeURIComponent(query)}`;
 
@@ -140,14 +145,15 @@ export const onCommand = async ({
 
     const apiData = (await searchRes.json()) as YtDlpApiResponse;
 
-    if (!apiData.media?.mp3) {
+    // Guard: both URLs must be present
+    if (!apiData.media?.mp3 || !apiData.media?.mp4) {
       throw new Error(
-        'No audio URL was returned for this query. Try a different search term.',
+        'No media URLs were returned for this query. Try a different search term.',
       );
     }
 
     const { mp3: mp3Url, mp4: mp4Url } = apiData.media;
-    const processingTime = apiData.ms ?? 0;
+    const serverMs = apiData.ms ?? 0;
 
     // ── Step 2: Update loading message while downloading the audio ─────────
 
@@ -183,21 +189,15 @@ export const onCommand = async ({
 
     if (loadingId) {
       await chat.unsendMessage(loadingId).catch(() => {
-        // Ignore — the message may have already been deleted or unsend is unsupported
+        // Ignore — message may already be deleted or unsend is unsupported
       });
     }
-
-    const fileSizeKb = Math.round(audioBuffer.length / 1024);
-    const fileSizeLabel =
-      fileSizeKb >= 1024
-        ? `${(fileSizeKb / 1024).toFixed(1)} MB`
-        : `${fileSizeKb} KB`;
 
     const caption = [
       `🎵  **${query}**`,
       '',
-      `📦  **File Size**     ${fileSizeLabel}`,
-      `⚡  **Processed in**  ${formatMs(processingTime)}`,
+      `📦  **File Size**     ${formatBytes(audioBuffer.length)}`,
+      `⚡  **API Response**  ${formatMs(serverMs)}`,
       `🎬  **Video**         ${mp4Url}`,
     ].join('\n');
 
