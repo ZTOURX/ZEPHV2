@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { Terminal, Clock, Layers, Hash, Users, Activity } from 'lucide-react'
+import { Terminal, Clock, Layers, Hash, Users, Activity, Play, RotateCcw, Square } from 'lucide-react'
 import _AnsiLib from 'ansi-to-react'
 import Card from '@/components/ui/data-display/Card'
 import ScrollArea from '@/components/ui/data-display/ScrollArea'
@@ -118,6 +118,7 @@ export default function BotConsolePage() {
             color="success"
             onClick={() => void botService.startBot(id)}
             disabled={isActive}
+            leftIcon={<Play className="h-4 w-4 shrink-0 fill-current" />}
             className="w-full justify-center"
           >
             Start
@@ -129,6 +130,7 @@ export default function BotConsolePage() {
               void botService.restartBot(id)
             }}
             disabled={!isActive}
+            leftIcon={<RotateCcw className="h-4 w-4 shrink-0" />}
             className="w-full justify-center"
           >
             Restart
@@ -139,6 +141,7 @@ export default function BotConsolePage() {
               void botService.stopBot(id)
             }}
             disabled={!isActive}
+            leftIcon={<Square className="h-4 w-4 shrink-0 fill-current" />}
             className="!bg-[rgb(var(--light-color-error))] !text-[rgb(var(--light-color-surface))] w-full justify-center"
           >
             Stop
