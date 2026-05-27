@@ -21,6 +21,7 @@
  * The command fetches the mp4 URL from the API response, streams it into a
  * buffer, and sends it as a named .mp4 attachment alongside a clean caption.
  * All network steps use AbortSignal.timeout() guards to prevent indefinite hangs.
+ * Retry logic handles render.com cold-start delays gracefully.
  *
  * Aliases: /vid, /ytvid
  * Access:  ANYONE
@@ -36,11 +37,24 @@ import type { CommandConfig } from '@/engine/types/module-config.types.js';
 
 const API_BASE = 'https://yt-dlp-stream.onrender.com/api/v2/q';
 
-/** Maximum wait for the metadata fetch step (ms). */
-const SEARCH_TIMEOUT_MS = 30_000;
+/**
+ * Maximum wait for the metadata fetch step (ms).
+ * Render.com free instances cold-start for up to ~50s; 60s gives a safe margin.
+ */
+const SEARCH_TIMEOUT_MS = 60_000;
 
-/** Maximum wait for the video binary download step (ms). */
-const DOWNLOAD_TIMEOUT_MS = 60_000;
+/**
+ * Maximum wait for the video binary download step (ms).
+ * Videos can be large and render.com streams can be slow — 120s ensures
+ * most clips complete even over congested connections.
+ */
+const DOWNLOAD_TIMEOUT_MS = 120_000;
+
+/** How many times to retry a failed API call before giving up. */
+const MAX_RETRIES = 2;
+
+/** Base delay between retries in ms (doubles each attempt). */
+const RETRY_BASE_DELAY_MS = 3_000;
 
 // ── API response type ──────────────────────────────────────────────────────────
 
@@ -80,12 +94,58 @@ function formatMs(ms: number): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
+/** 2_097_152 → "2.0 MB" | 512_000 → "500 KB" */
+function formatBytes(bytes: number): string {
+  const kb = Math.round(bytes / 1024);
+  if (kb >= 1024) return `${(kb / 1024).toFixed(1)} MB`;
+  return `${kb} KB`;
+}
+
+/**
+ * Fetches a URL with automatic retries on network errors and 5xx responses.
+ * Uses exponential backoff between attempts to avoid hammering cold-starting services.
+ */
+async function fetchWithRetry(
+  url: string,
+  timeoutMs: number,
+  maxRetries = MAX_RETRIES,
+): Promise<Response> {
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    if (attempt > 0) {
+      // Exponential backoff: 3s, 6s, ...
+      await new Promise((r) => setTimeout(r, RETRY_BASE_DELAY_MS * attempt));
+    }
+
+    try {
+      const res = await fetch(url, {
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+
+      // Only retry on server errors (5xx) — 4xx errors are caller mistakes
+      if (res.status >= 500 && attempt < maxRetries) {
+        lastError = new Error(`HTTP ${res.status}`);
+        continue;
+      }
+
+      return res;
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      // Don't retry on AbortError (timeout) — it will just time out again
+      if ((err as { name?: string }).name === 'AbortError') throw err;
+    }
+  }
+
+  throw lastError ?? new Error('Fetch failed after retries');
+}
+
 // ── Command configuration ──────────────────────────────────────────────────────
 
 export const config: CommandConfig = {
   name: 'video',
   aliases: ['vid', 'ytvid'] as string[],
-  version: '2.0.0',
+  version: '2.1.0',
   role: Role.ANYONE,
   author: 'AjiroDesu',
   description:
@@ -121,6 +181,24 @@ export const onCommand = async ({
     message: `🔍  Searching for **${query}**...`,
   })) as string | undefined;
 
+  // Edits the loading message to reflect current progress.
+  const updateLoading = (msg: string): Promise<void> => {
+    if (!loadingId) return Promise.resolve();
+    return chat
+      .editMessage({
+        style: MessageStyle.MARKDOWN,
+        message_id_to_edit: loadingId,
+        message: msg,
+      })
+      .catch(() => {});
+  };
+
+  // Cleans up the loading indicator — silently ignored on failure.
+  const dismissLoading = (): Promise<void> =>
+    loadingId
+      ? chat.unsendMessage(loadingId).catch(() => {})
+      : Promise.resolve();
+
   try {
     // ── Step 1: Fetch video URLs from the search API ───────────────────────
     // The API uses an empty-key query parameter: ?=<encoded query>
@@ -128,9 +206,19 @@ export const onCommand = async ({
 
     const apiUrl = `${API_BASE}?=${encodeURIComponent(query)}`;
 
-    const searchRes = await fetch(apiUrl, {
-      signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS),
-    });
+    let warnedColdStart = false;
+
+    const searchRes = await fetchWithRetry(apiUrl, SEARCH_TIMEOUT_MS).catch(
+      async (err) => {
+        if (!warnedColdStart) {
+          warnedColdStart = true;
+          await updateLoading(
+            `⏳  Server is warming up, please wait for **${query}**...`,
+          );
+        }
+        throw err;
+      },
+    );
 
     if (!searchRes.ok) {
       throw new Error(
@@ -151,19 +239,11 @@ export const onCommand = async ({
 
     // ── Step 2: Update loading message while downloading the video ─────────
 
-    if (loadingId) {
-      await chat.editMessage({
-        style: MessageStyle.MARKDOWN,
-        message_id_to_edit: loadingId,
-        message: `⬇️  Downloading video for **${query}**...`,
-      });
-    }
+    await updateLoading(`⬇️  Downloading video for **${query}**...`);
 
     // ── Step 3: Stream video binary into a buffer ──────────────────────────
 
-    const videoRes = await fetch(mp4Url, {
-      signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
-    });
+    const videoRes = await fetchWithRetry(mp4Url, DOWNLOAD_TIMEOUT_MS);
 
     if (!videoRes.ok) {
       throw new Error(
@@ -181,22 +261,12 @@ export const onCommand = async ({
 
     // ── Step 4: Dismiss loading message and send the video attachment ──────
 
-    if (loadingId) {
-      await chat.unsendMessage(loadingId).catch(() => {
-        // Ignore — the message may have already been deleted or unsend is unsupported
-      });
-    }
-
-    const fileSizeKb = Math.round(videoBuffer.length / 1024);
-    const fileSizeLabel =
-      fileSizeKb >= 1024
-        ? `${(fileSizeKb / 1024).toFixed(1)} MB`
-        : `${fileSizeKb} KB`;
+    await dismissLoading();
 
     const caption = [
       `🎬  **${query}**`,
       '',
-      `📦  **File Size**     ${fileSizeLabel}`,
+      `📦  **File Size**     ${formatBytes(videoBuffer.length)}`,
       `⚡  **Processed in**  ${formatMs(processingTime)}`,
     ].join('\n');
 
@@ -214,9 +284,7 @@ export const onCommand = async ({
     const error = err as { message?: string };
 
     // Always clean up the loading indicator on failure
-    if (loadingId) {
-      await chat.unsendMessage(loadingId).catch(() => {});
-    }
+    await dismissLoading();
 
     await chat.replyMessage({
       style: MessageStyle.MARKDOWN,

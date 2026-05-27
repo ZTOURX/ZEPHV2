@@ -33,15 +33,24 @@ import type { CommandConfig } from '@/engine/types/module-config.types.js';
 
 const API_BASE = 'https://yt-dlp-stream.onrender.com/api/v2/q';
 
-/** Maximum wait for the metadata + resolve step (ms). */
-const SEARCH_TIMEOUT_MS = 30_000;
+/**
+ * Maximum wait for the metadata + resolve step (ms).
+ * Render.com free instances may cold-start for up to ~50s — 60s covers this.
+ */
+const SEARCH_TIMEOUT_MS = 60_000;
 
 /**
  * Maximum wait for the audio binary download step (ms).
- * URL-based requests take longer (~17s observed) than search queries (~1ms),
- * so this must be generous enough to cover both cases.
+ * URL-based requests take longer (~17s observed) than search queries (~1ms).
+ * Must be generous enough for large audio files over cold connections.
  */
-const DOWNLOAD_TIMEOUT_MS = 90_000;
+const DOWNLOAD_TIMEOUT_MS = 120_000;
+
+/** How many times to retry a failed API call before giving up. */
+const MAX_RETRIES = 2;
+
+/** Base delay between retries in ms (doubles each attempt). */
+const RETRY_BASE_DELAY_MS = 3_000;
 
 // ── YouTube URL patterns ───────────────────────────────────────────────────────
 
@@ -105,12 +114,51 @@ function formatBytes(bytes: number): string {
   return `${kb} KB`;
 }
 
+/**
+ * Fetches a URL with automatic retries on network errors and 5xx responses.
+ * Uses exponential backoff between attempts to avoid hammering cold-starting services.
+ */
+async function fetchWithRetry(
+  url: string,
+  timeoutMs: number,
+  maxRetries = MAX_RETRIES,
+): Promise<Response> {
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    if (attempt > 0) {
+      // Exponential backoff: 3s, 6s, ...
+      await new Promise((r) => setTimeout(r, RETRY_BASE_DELAY_MS * attempt));
+    }
+
+    try {
+      const res = await fetch(url, {
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+
+      // Only retry on server errors (5xx) — 4xx errors are caller mistakes
+      if (res.status >= 500 && attempt < maxRetries) {
+        lastError = new Error(`HTTP ${res.status}`);
+        continue;
+      }
+
+      return res;
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      // Don't retry on AbortError (timeout) — it will just time out again
+      if ((err as { name?: string }).name === 'AbortError') throw err;
+    }
+  }
+
+  throw lastError ?? new Error('Fetch failed after retries');
+}
+
 // ── Command configuration ──────────────────────────────────────────────────────
 
 export const config: CommandConfig = {
   name: 'play',
   aliases: ['song', 'music'] as string[],
-  version: '3.0.0',
+  version: '3.1.0',
   role: Role.ANYONE,
   author: 'AjiroDesu',
   description:
@@ -145,13 +193,6 @@ export const onCommand = async ({
   const isUrl = videoId !== null;
 
   /**
-   * What gets sent to the API:
-   *   - URL input  → the original URL  (API extracts by video ID directly)
-   *   - Search     → the query string  (API resolves top YouTube result)
-   */
-  const apiInput = isUrl ? input : input;
-
-  /**
    * Human-readable label used in messages and the output filename.
    *   - URL input  → short ID form so the caption stays clean
    *   - Search     → the query as typed
@@ -173,16 +214,34 @@ export const onCommand = async ({
       ? chat.unsendMessage(loadingId).catch(() => {})
       : Promise.resolve();
 
+  // Edits the loading message (for progress updates).
+  const updateLoading = (msg: string): Promise<void> => {
+    if (!loadingId) return Promise.resolve();
+    return chat
+      .editMessage({
+        style: MessageStyle.MARKDOWN,
+        message_id_to_edit: loadingId,
+        message: msg,
+      })
+      .catch(() => {});
+  };
+
   try {
     // ── Step 1: Resolve media URLs ─────────────────────────────────────────
     // The API uses a valueless query key: /api/v2/q?=<input>
     // Both plain search strings and full YouTube URLs are accepted as-is.
 
-    const apiUrl = `${API_BASE}?=${encodeURIComponent(apiInput)}`;
+    const apiUrl = `${API_BASE}?=${encodeURIComponent(input)}`;
 
-    const searchRes = await fetch(apiUrl, {
-      signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS),
-    });
+    const searchRes = await fetchWithRetry(apiUrl, SEARCH_TIMEOUT_MS).catch(
+      async (err) => {
+        // If first attempt takes a while, inform user the server is warming up
+        await updateLoading(
+          `⏳  Server is warming up, please wait for **${displayLabel}**...`,
+        );
+        throw err;
+      },
+    );
 
     if (!searchRes.ok) {
       throw new Error(
@@ -205,12 +264,10 @@ export const onCommand = async ({
     const serverMs = apiData.ms ?? 0;
 
     // ── Step 2: Download audio binary ─────────────────────────────────────
-    // URL-based requests observed at ~17s server-side; search queries at ~1ms.
-    // Both share the same download step — DOWNLOAD_TIMEOUT_MS covers both.
 
-    const audioRes = await fetch(mp3Url, {
-      signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
-    });
+    await updateLoading(`⬇️  Downloading audio for **${displayLabel}**...`);
+
+    const audioRes = await fetchWithRetry(mp3Url, DOWNLOAD_TIMEOUT_MS);
 
     if (!audioRes.ok) {
       throw new Error(
