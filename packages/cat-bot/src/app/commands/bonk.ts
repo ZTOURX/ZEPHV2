@@ -3,8 +3,8 @@
  *
  * Sends the sender bonking a target user.
  *
- * avatar1 = sender's avatar
- * avatar2 = @mention avatar OR replied-to user's avatar (required)
+ * avatar1 = target's avatar (being bonked)
+ * avatar2 = sender's avatar (doing the bonking)
  *
  * ⚠️  Not available on Facebook Page — restricted via config.platform.
  *     No non-admin guide applies since Page is fully excluded.
@@ -88,13 +88,14 @@ export const onCommand = async ({
       return;
     }
 
-    const url = createUrl('wajiro', '/api/v1/bonk', {
-      avatar1: targetAvatar,
-      avatar2: senderAvatar,
-    });
+    const url = createUrl('wajiro', '/api/v1/bonk');
     if (!url) throw new Error('Failed to build API URL.');
 
-    const res = await fetch(url);
+    const formData = new FormData();
+    formData.append('avatar1', targetAvatar);
+    formData.append('avatar2', senderAvatar);
+
+    const res = await fetch(url, { method: 'POST', body: formData });
     if (!res.ok) throw new Error(`API responded with status ${res.status}`);
 
     const imageBuffer = Buffer.from(await res.arrayBuffer());
