@@ -7,15 +7,29 @@
 //   Modes: @user1 @user2 | reply | @mention | uid | me | (none)
 //
 // Gender filtering (random and me modes only):
-//   Candidates are resolved via ctx.user.getInfo() which carries the platform
-//   raw user object. For Facebook Messenger (fca-unofficial) the gender field
-//   is present on the raw object: 2 = male, 1 = female, 0 = unknown.
-//   When gender cannot be determined for enough candidates the command falls
-//   back to unrestricted random selection and notifies the user.
+//   Gender is read from the raw fca-unofficial user object (FB Messenger only).
+//   fca returns gender as a number: 2 = male, 1 = female, 0 = unknown.
+//   On Discord and Telegram gender is never available, so the command always
+//   falls back to unrestricted random selection on those platforms.
 //
 // Deleted/disabled account filtering:
 //   Candidates whose resolved name matches known platform tombstone strings
-//   ("Facebook User", "Deleted Account") or who have no avatar are excluded.
+//   ("Facebook User", "Deleted Account") are excluded.
+//   avatarUrl === null is NOT used as a deleted signal — on Telegram avatarUrl
+//   is always null by design (getFullUserInfo defers the extra API call), which
+//   would incorrectly mark every Telegram user as deleted.
+//
+// Participant resolution per platform:
+//   Facebook Messenger — reads event['participantIDs'] directly (fca injects
+//     the full thread roster on every raw message payload). thread.getInfo() is
+//     never called — it triggers a GraphQL round-trip that is cached for 3 hours
+//     and returns an empty array on the first invocation.
+//   Telegram           — the Bot API has no member-list endpoint. getFullThreadInfo()
+//     always returns participantIDs: []. We fall back to adminIDs (populated via
+//     getChatAdministrators). The sender is always included as a candidate so
+//     "me" mode still works even in groups with a single admin.
+//   Discord            — getFullThreadInfo() returns guild.members.cache; works
+//     reliably when the GuildMembers intent is enabled.
 //
 // Platform restriction: Discord, Telegram, Facebook Messenger only.
 // Cooldown: 60 seconds.
@@ -32,8 +46,8 @@ import type { CommandConfig } from '@/engine/types/module-config.types.js';
 
 export const config: CommandConfig = {
   name: 'pair',
-  aliases: ['ship', 'compatibility'],
-  version: '2.0.0',
+  aliases: ['ship'],
+  version: '2.1.0',
   role: Role.ANYONE,
   author: 'AjiroDesu',
   description:
@@ -45,7 +59,7 @@ export const config: CommandConfig = {
     '@mention       <- pairs you with the mentioned user',
     '<uid>          <- pairs you with a user by their ID',
     'me             <- pairs you with a random group member (opposite gender)',
-    '(none)         <- randomly pairs two members of opposite gender',
+    '(none)         <- randomly pairs two group members',
   ],
   cooldown: 60,
   hasPrefix: true,
@@ -60,11 +74,14 @@ export const config: CommandConfig = {
 
 type Gender = 'male' | 'female' | 'unknown';
 
-// Maximum number of participants to resolve full profiles for during random
-// candidate search. Keeps API calls bounded for large groups.
+// Maximum number of candidates to resolve full profiles for during random search.
+// Keeps API calls bounded for very large groups.
 const MAX_PROFILE_FETCH = 50;
 
 // Known platform tombstone display names for deleted or disabled accounts.
+// NOTE: avatarUrl === null is intentionally NOT used as a deleted signal because
+// on Telegram getFullUserInfo always returns avatarUrl: null by design — using it
+// would mark every Telegram user as deleted and empty the valid candidate pool.
 const DELETED_NAMES = new Set([
   'facebook user',
   'deleted account',
@@ -72,9 +89,10 @@ const DELETED_NAMES = new Set([
   'ghost',
 ]);
 
-// Parses the gender value returned by platform adapters.
-// fca-unofficial: 2 = male, 1 = female, 0 = unknown.
-// Some adapters may return string values ("MALE", "FEMALE").
+// Parses the gender value returned by fca-unofficial (FB Messenger only).
+// fca returns gender as a number: 2 = male, 1 = female, 0 = unknown.
+// Some fca versions return string values ("MALE", "FEMALE").
+// On Discord and Telegram gender is never exposed — always returns 'unknown'.
 function parseGender(value: unknown): Gender {
   if (typeof value === 'number') {
     if (value === 2) return 'male';
@@ -97,8 +115,15 @@ interface UserProfile {
 }
 
 // Resolves a single user's profile — gender and deleted status.
-// Accesses platform-specific fields via type assertion since UnifiedUserInfo
-// only defines the cross-platform minimum; fca raw object carries gender.
+//
+// Gender is sourced from the fca-unofficial raw user object. getFullUserInfo()
+// on FB Messenger calls api.getUserInfo() which returns the raw fca shape; gender
+// lives in the raw payload and is accessed via the loose cast below.
+// On Discord and Telegram getFullUserInfo() returns a UnifiedUserInfo that never
+// carries a gender field, so parseGender() returns 'unknown' for those platforms.
+//
+// isDeleted is based solely on display name matching DELETED_NAMES.
+// avatarUrl is deliberately excluded from the deleted check (see file header).
 async function resolveProfile(
   userID: string,
   user: UserContext,
@@ -107,19 +132,20 @@ async function resolveProfile(
     const info = await user.getInfo(userID);
     const loose = info as unknown as Record<string, unknown>;
 
-    // Try gender from the top-level info object first (some adapters hoist it),
-    // then fall back to the nested raw platform object.
+    // fca-unofficial hoists gender onto the resolved user object. Some versions
+    // nest it under a 'raw' key; others place it at the top level.
     const rawObj = loose['raw'] as Record<string, unknown> | undefined;
     const genderRaw = loose['gender'] ?? rawObj?.['gender'];
     const gender = parseGender(genderRaw);
 
     const nameLower = info.name.toLowerCase().trim();
-    const isDeleted =
-      DELETED_NAMES.has(nameLower) || info.avatarUrl === null;
+    const isDeleted = DELETED_NAMES.has(nameLower);
 
     return { id: userID, name: info.name, gender, isDeleted };
   } catch {
-    return { id: userID, name: userID, gender: 'unknown', isDeleted: false };
+    // Network / API error — treat as a live but gender-unknown user rather than
+    // dropping the candidate entirely, so large groups still work.
+    return { id: userID, name: `User ${userID}`, gender: 'unknown', isDeleted: false };
   }
 }
 
@@ -129,6 +155,77 @@ async function resolveProfiles(
   user: UserContext,
 ): Promise<UserProfile[]> {
   return Promise.all(ids.map((id) => resolveProfile(id, user)));
+}
+
+// ── Participant resolver ──────────────────────────────────────────────────────
+
+interface ParticipantResult {
+  // Full list of known participant IDs including the sender.
+  ids: string[];
+  // True when we are on Telegram and fell back to adminIDs (Bot API limitation).
+  isTelegramAdminFallback: boolean;
+}
+
+// Resolves the participant roster for the current thread, handling each platform's
+// quirks so the command logic above never needs to branch on platform.
+//
+// Facebook Messenger:
+//   fca-unofficial injects the full thread roster as participantIDs on every raw
+//   message event. We read event['participantIDs'] directly — this is always
+//   populated and always fresh. Calling thread.getInfo() instead would trigger a
+//   GraphQL round-trip cached for 3 hours that returns [] on first access.
+//
+// Telegram:
+//   The Bot API exposes no member-list endpoint. getFullThreadInfo() always returns
+//   participantIDs: []. We fall back to adminIDs from getChatAdministrators, which
+//   is populated for all group and supergroup types. In the worst case (no admins
+//   resolved), we include the sender so "me" mode still has at least one candidate.
+//
+// Discord:
+//   getFullThreadInfo() returns guild.members.cache. Reliable when the GuildMembers
+//   privileged intent is enabled; may be sparse otherwise, but that is a bot config
+//   concern rather than something pair.ts can work around.
+async function resolveParticipants(
+  thread: AppCtx['thread'],
+  event: Record<string, unknown>,
+  threadID: string,
+  senderID: string,
+): Promise<ParticipantResult> {
+  const platform = event['platform'] as string | undefined;
+
+  // ── Facebook Messenger — fast path via event payload ─────────────────────
+  if (platform === Platforms.FacebookMessenger) {
+    const eventIDs = event['participantIDs'] as string[] | undefined;
+    if (Array.isArray(eventIDs) && eventIDs.length > 0) {
+      return { ids: eventIDs, isTelegramAdminFallback: false };
+    }
+    // Fallback: event IDs missing (should not happen with fca, but be safe)
+    // and fall through to thread.getInfo() below.
+  }
+
+  // ── Discord / FB fallback — standard thread.getInfo() path ───────────────
+  try {
+    const info = await thread.getInfo(threadID);
+    const ids = info.participantIDs ?? [];
+
+    // ── Telegram — Bot API never populates participantIDs ────────────────
+    if (platform === Platforms.Telegram && ids.length === 0) {
+      const adminIDs = info.adminIDs ?? [];
+      // Always ensure the sender is included so "me" mode works even in groups
+      // where only the sender is a known admin.
+      const combined = Array.from(new Set([...adminIDs, senderID]));
+      return {
+        ids: combined,
+        isTelegramAdminFallback: adminIDs.length > 0,
+      };
+    }
+
+    return { ids, isTelegramAdminFallback: false };
+  } catch {
+    // thread.getInfo() failed entirely — return just the sender as a last resort
+    // so the error message downstream is accurate ("not enough participants").
+    return { ids: [senderID], isTelegramAdminFallback: false };
+  }
 }
 
 // ── Compatibility scorer ──────────────────────────────────────────────────────
@@ -144,7 +241,7 @@ function computeCompatibility(idA: string, idB: string): number {
   return 74 + (hash % 26);
 }
 
-// ── Shuffle helper ────────────────────────────────────────────────────────────
+// ── Shuffle / pick helpers ────────────────────────────────────────────────────
 
 function shuffle<T>(arr: T[]): T[] {
   const a = [...arr];
@@ -167,7 +264,6 @@ export const onCommand = async ({
   thread,
   event,
   args,
-  usage,
 }: AppCtx): Promise<void> => {
   // ── Group guard ─────────────────────────────────────────────────────────────
   if (!event['isGroup']) {
@@ -178,75 +274,74 @@ export const onCommand = async ({
     return;
   }
 
-  const senderID   = event['senderID'] as string;
-  const threadID   = event['threadID'] as string;
-  const mentions   = event['mentions'] as Record<string, string> | undefined;
-  const mentionIDs = Object.keys(mentions ?? {});
-
+  const senderID        = event['senderID'] as string;
+  const threadID        = event['threadID'] as string;
+  const mentions        = event['mentions'] as Record<string, string> | undefined;
+  const mentionIDs      = Object.keys(mentions ?? {});
   const messageReply    = event['messageReply'] as Record<string, unknown> | undefined;
   const repliedSenderID = (messageReply?.['senderID'] as string | undefined) ?? null;
 
-  // ── Fetch thread participants (needed for random/me modes) ──────────────────
-  let participants: string[] = [];
+  // ── Fetch participant roster (only needed for random/me modes) ─────────────
+  let participants: string[]         = [];
+  let telegramAdminFallback          = false;
+
   const needsParticipants =
-    mentionIDs.length < 2 &&
     !repliedSenderID &&
-    (mentionIDs.length === 0) &&
+    mentionIDs.length === 0 &&
     (!args[0] || args[0].toLowerCase() === 'me');
 
   if (needsParticipants) {
-    try {
-      const info = await thread.getInfo(threadID);
-      participants = info.participantIDs ?? [];
-    } catch {
-      // Fall through — empty participants triggers the error below
-    }
+    const resolved = await resolveParticipants(
+      thread,
+      event as Record<string, unknown>,
+      threadID,
+      senderID,
+    );
+    participants          = resolved.ids;
+    telegramAdminFallback = resolved.isTelegramAdminFallback;
   }
 
-  // ── Resolve pairs ───────────────────────────────────────────────────────────
+  // ── Resolve pairing mode ────────────────────────────────────────────────────
 
   let userID1: string;
   let userID2: string;
   let overrideName1: string | null = null;
   let overrideName2: string | null = null;
-  let genderFilterWarning = false;
+  let genderFilterWarning          = false;
 
-  // ── Mode 0: double mention — ship the two tagged users ─────────────────────
+  // Mode 0: two mentions — ship those two users
   if (mentionIDs.length >= 2) {
-    userID1 = mentionIDs[0]!;
-    userID2 = mentionIDs[1]!;
+    userID1       = mentionIDs[0]!;
+    userID2       = mentionIDs[1]!;
     overrideName1 = (mentions?.[userID1] ?? '').replace(/^@/, '').trim() || null;
     overrideName2 = (mentions?.[userID2] ?? '').replace(/^@/, '').trim() || null;
   }
 
-  // ── Mode 1: reply — pair sender with the replied-to user ───────────────────
+  // Mode 1: reply — pair sender with replied-to user
   else if (repliedSenderID) {
     userID1 = senderID;
     userID2 = repliedSenderID;
   }
 
-  // ── Mode 2: single mention — pair sender with the mentioned user ────────────
+  // Mode 2: single mention — pair sender with the mentioned user
   else if (mentionIDs.length === 1) {
-    userID1 = senderID;
-    userID2 = mentionIDs[0]!;
+    userID1       = senderID;
+    userID2       = mentionIDs[0]!;
     overrideName2 = (mentions?.[userID2] ?? '').replace(/^@/, '').trim() || null;
   }
 
-  // ── Mode 3: UID arg ─────────────────────────────────────────────────────────
+  // Mode 3: explicit UID argument
   else if (args[0] && args[0].toLowerCase() !== 'me') {
     userID1 = senderID;
     userID2 = args[0].trim();
   }
 
-  // ── Mode 4: /pair me — sender + random opposite-gender participant ──────────
+  // Mode 4: "me" — pair sender with a random opposite-gender participant
   else if (args[0]?.toLowerCase() === 'me') {
     const senderProfile = await resolveProfile(senderID, user);
     const opposite: Gender =
-      senderProfile.gender === 'male'
-        ? 'female'
-        : senderProfile.gender === 'female'
-        ? 'male'
-        : 'unknown';
+      senderProfile.gender === 'male'   ? 'female' :
+      senderProfile.gender === 'female' ? 'male'   : 'unknown';
 
     const candidateIDs = shuffle(
       participants.filter((id) => id !== senderID),
@@ -261,16 +356,24 @@ export const onCommand = async ({
     }
 
     const profiles = await resolveProfiles(candidateIDs, user);
-    const valid = profiles.filter((p) => !p.isDeleted);
+    const valid    = profiles.filter((p) => !p.isDeleted);
 
-    // Try opposite gender first; fall back to any valid candidate
+    if (valid.length === 0) {
+      await chat.replyMessage({
+        style: MessageStyle.MARKDOWN,
+        message: '❌ No eligible participants found to pair you with.',
+      });
+      return;
+    }
+
+    // Prefer opposite gender; fall back to any valid candidate
     const gendered = opposite !== 'unknown'
       ? valid.filter((p) => p.gender === opposite)
       : [];
 
-    const partner = pickOne(gendered) ?? pickOne(valid);
+    if (gendered.length === 0) genderFilterWarning = true;
 
-    if (gendered.length === 0 && valid.length > 0) genderFilterWarning = true;
+    const partner = pickOne(gendered) ?? pickOne(valid);
 
     if (!partner) {
       await chat.replyMessage({
@@ -284,13 +387,15 @@ export const onCommand = async ({
     userID2 = partner.id;
   }
 
-  // ── Mode 5: fully random — two opposite-gender participants ─────────────────
+  // Mode 5: fully random — pick any two distinct participants
   else {
+    // candidateIDs excludes the sender; we need at least 2 distinct candidates
+    // to form a pair. The sender is NOT added back — we want two OTHER users.
     const candidateIDs = shuffle(
       participants.filter((id) => id !== senderID),
     ).slice(0, MAX_PROFILE_FETCH);
 
-    if (participants.length < 2 || candidateIDs.length === 0) {
+    if (candidateIDs.length < 2) {
       await chat.replyMessage({
         style: MessageStyle.MARKDOWN,
         message:
@@ -300,7 +405,16 @@ export const onCommand = async ({
     }
 
     const profiles = await resolveProfiles(candidateIDs, user);
-    const valid = profiles.filter((p) => !p.isDeleted);
+    const valid    = profiles.filter((p) => !p.isDeleted);
+
+    if (valid.length < 2) {
+      await chat.replyMessage({
+        style: MessageStyle.MARKDOWN,
+        message:
+          '❌ Not enough eligible participants found. Try mentioning someone instead.',
+      });
+      return;
+    }
 
     const males   = valid.filter((p) => p.gender === 'male');
     const females = valid.filter((p) => p.gender === 'female');
@@ -309,11 +423,11 @@ export const onCommand = async ({
     let picked2: UserProfile | undefined;
 
     if (males.length > 0 && females.length > 0) {
-      // Ideal path: one from each gender
+      // Ideal: one from each gender
       picked1 = pickOne(males)!;
       picked2 = pickOne(females)!;
     } else {
-      // Fallback: not enough gendered data — pick any two distinct valid users
+      // No gender data (Discord / Telegram) or all same gender — pick any two
       genderFilterWarning = true;
       const shuffled = shuffle(valid);
       picked1 = shuffled[0];
@@ -329,7 +443,7 @@ export const onCommand = async ({
       return;
     }
 
-    // Randomly assign which user goes to which slot
+    // Randomly assign which slot each user occupies
     if (Math.random() < 0.5) {
       userID1 = picked1.id;
       userID2 = picked2.id;
@@ -348,7 +462,7 @@ export const onCommand = async ({
     return;
   }
 
-  // ── Resolve names and avatars ───────────────────────────────────────────────
+  // ── Resolve names, avatars, and call API ────────────────────────────────────
   try {
     const [resolvedName1, resolvedName2] = await Promise.all([
       user.getName(userID1),
@@ -371,25 +485,29 @@ export const onCommand = async ({
       return;
     }
 
-    // ── Compute score and call API ────────────────────────────────────────────
     const compatibility = computeCompatibility(userID1, userID2);
 
     const apiUrl = createUrl('wajiro', '/api/v1/pair');
     if (!apiUrl) throw new Error('Failed to build Wajiro API URL.');
 
     const form = new FormData();
-    form.append('avatar1', avatarUrl1);
-    form.append('avatar2', avatarUrl2);
-    form.append('name1', name1);
-    form.append('name2', name2);
-    form.append('compatibility', String(compatibility));
+    form.append('avatar1',        avatarUrl1);
+    form.append('avatar2',        avatarUrl2);
+    form.append('name1',          name1);
+    form.append('name2',          name2);
+    form.append('compatibility',  String(compatibility));
 
     const res = await fetch(apiUrl, { method: 'POST', body: form });
     if (!res.ok) throw new Error(`Wajiro API returned status ${res.status}`);
 
     const imageBuffer = Buffer.from(await res.arrayBuffer());
-
-    const caption = buildCaption(name1, name2, compatibility, genderFilterWarning);
+    const caption     = buildCaption(
+      name1,
+      name2,
+      compatibility,
+      genderFilterWarning,
+      telegramAdminFallback,
+    );
 
     await chat.replyMessage({
       style: MessageStyle.MARKDOWN,
@@ -412,6 +530,7 @@ function buildCaption(
   name2: string,
   score: number,
   genderWarning: boolean,
+  telegramAdminFallback: boolean,
 ): string {
   const lines = [
     `${heartEmoji(score)} **${name1}** x **${name2}**`,
@@ -420,6 +539,11 @@ function buildCaption(
   if (genderWarning) {
     lines.push(
       '_Note: gender info was unavailable, so the pair was chosen at random._',
+    );
+  }
+  if (telegramAdminFallback) {
+    lines.push(
+      '_Note: Telegram does not expose full member lists — only group admins were considered._',
     );
   }
   return lines.join('\n');
