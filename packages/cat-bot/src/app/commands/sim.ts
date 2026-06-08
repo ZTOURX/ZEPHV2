@@ -5,8 +5,6 @@ import { OptionType } from '@/engine/modules/command/command-option.constants.js
 import type { CommandConfig } from '@/engine/types/module-config.types.js';
 
 const BASE_URL = 'https://api.chatanywhere.tech/v1';
-
-// 🧠 Pure Memory-Based Toggle Map (Katumbas ng global.simsimi = new Map())
 const activeThreads = new Map<string, { isOn: boolean; model: string }>();
 
 export const config: CommandConfig = {
@@ -29,9 +27,6 @@ export const config: CommandConfig = {
   ],
 };
 
-// =========================================================================
-// 🌐 CHATANYWHERE API CORE CALL
-// =========================================================================
 const callChatAnywhereAI = async (input: string, currentModel: string): Promise<string> => {
   const apiKey = process.env.PROVIDER_API_KEY || '';
   if (!apiKey) throw new Error('Missing PROVIDER_API_KEY');
@@ -65,14 +60,10 @@ const callChatAnywhereAI = async (input: string, currentModel: string): Promise<
   return data.choices?.[0]?.message?.content || 'Inantok ako bigla accla, ulitin mo nga.';
 };
 
-// =========================================================================
-// 📡 HANDLE EVENT (Dito nakikinig sa normal na chat nang walang prefix)
-// =========================================================================
 export const onEvent = async ({ chat, message }: AppCtx & { message: any }): Promise<void> => {
   const body = message?.body?.trim() || '';
   if (!body) return;
 
-  // Iwasan ang loop kapag ang chat ay command ng sim mismo o iba pang bot commands
   if (body.toLowerCase().startsWith('sim') || body.startsWith('/') || body.startsWith('!')) return;
 
   const threadId = (chat as any).threadID || (chat as any).chatID || (chat as any).id || 'default_thread';
@@ -81,7 +72,6 @@ export const onEvent = async ({ chat, message }: AppCtx & { message: any }): Pro
   if (threadSettings && threadSettings.isOn) {
     try {
       const aiReply = await callChatAnywhereAI(body, threadSettings.model);
-
       await chat.replyMessage({
         style: MessageStyle.MARKDOWN,
         message: aiReply,
@@ -92,9 +82,6 @@ export const onEvent = async ({ chat, message }: AppCtx & { message: any }): Pro
   }
 };
 
-// =========================================================================
-// 🛠️ RUN COMMAND (sim on / sim off / sim model <name> / sim <text>)
-// =========================================================================
 export const onCommand = async ({ chat, args }: AppCtx): Promise<void> => {
   const input = args.join(' ').trim();
   const threadId = (chat as any).threadID || (chat as any).chatID || (chat as any).id || 'default_thread';
@@ -112,31 +99,27 @@ export const onCommand = async ({ chat, args }: AppCtx): Promise<void> => {
     return;
   }
 
-  // 🔄 CASE: sim on
   if (input.toLowerCase() === 'on') {
     if (currentSettings.isOn) {
-      await chat.replyMessage({ style: MessageStyle.MARKDOWN, message: '❌ Naka-on na ang sim, paps. Huwag mo na ako paulit-ulitin!' });
+      await chat.replyMessage({ style: MessageStyle.MARKDOWN, message: '❌ Naka-on na ang sim, paps.' });
       return;
     }
     currentSettings.isOn = true;
     activeThreads.set(threadId, currentSettings);
-    
     await chat.replyMessage({
       style: MessageStyle.MARKDOWN,
-      message: '𝗦𝗶𝗺 𝗔𝘂𝘁ο-𝗥𝗲𝗽𝗹𝘆 𝗶𝘀 𝗻𝗼𝘄 𝗢𝗡! Develop by: Zephyrus Wym. Ready na makipag-talastasan 🖕',
+      message: '𝗦𝗶𝗺 𝗔𝘂𝘁ο-𝗥𝗲𝗽𝗹𝘆 𝗶𝘀 𝗻𝗼𝘄 𝗢𝗡! Ready na makipag-talastasan 🖕',
     });
     return;
   }
 
-  // 🔄 CASE: sim off
   if (input.toLowerCase() === 'off') {
     if (!currentSettings.isOn) {
-      await chat.replyMessage({ style: MessageStyle.MARKDOWN, message: '❌ Hindi pa naman nakabukas ang sim mo ah?' });
+      await chat.replyMessage({ style: MessageStyle.MARKDOWN, message: '❌ Hindi pa nakabukas ang sim mo ah?' });
       return;
     }
     currentSettings.isOn = false;
     activeThreads.set(threadId, currentSettings);
-
     await chat.replyMessage({
       style: MessageStyle.MARKDOWN,
       message: '💤 **Sim Auto-Reply is now OFF.** Tatahimik na ako, paps.',
@@ -144,10 +127,25 @@ export const onCommand = async ({ chat, args }: AppCtx): Promise<void> => {
     return;
   }
 
-  // 🔄 CASE: sim model <name>
   if (args[0]?.toLowerCase() === 'model' && args[1]) {
     const targetModel = args[1].toLowerCase();
     if (!['deepseek', 'gpt3', 'gpt4', 'gpt5'].includes(targetModel)) {
-      await chat.replyMessage({ style: MessageStyle.MARKDOWN, message: '❌ Invalid model! Pumili lang sa: `deepseek`, `gpt3`, `gpt4`.' });
-      return
-      
+      await chat.replyMessage({ style: MessageStyle.MARKDOWN, message: '❌ Invalid model!' });
+      return;
+    }
+    currentSettings.model = targetModel;
+    activeThreads.set(threadId, currentSettings);
+    await chat.replyMessage({ style: MessageStyle.MARKDOWN, message: `🔄 Model switched to **${targetModel.toUpperCase()}**.` });
+    return;
+  }
+
+  try {
+    const responseText = await callChatAnywhereAI(input, currentSettings.model);
+    await chat.replyMessage({ style: MessageStyle.MARKDOWN, message: responseText });
+  } catch (error) {
+    console.error('Sim Manual Error:', error);
+  }
+};
+
+export const handleEvent = onEvent;
+export const onChat = onEvent;
