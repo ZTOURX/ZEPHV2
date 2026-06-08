@@ -4,8 +4,8 @@ import { MessageStyle } from '@/engine/constants/message-style.constants.js';
 import { OptionType } from '@/engine/modules/command/command-option.constants.js';
 import type { CommandConfig } from '@/engine/types/module-config.types.js';
 
-// 📝 PALITAN MO ITO kung may partikular na API URL na binigay ang provider mo
-const BASE_URL = 'https://openrouter.ai/api/v1'; 
+// 🚀 ChatAnywhere Official Base URL
+const BASE_URL = 'https://api.chatanywhere.tech/v1'; 
 
 const SIM_CONFIG_COLLECTION = 'sim_config';
 const SIM_MODEL_COLLECTION = 'sim_model';
@@ -13,10 +13,10 @@ const SIM_MODEL_COLLECTION = 'sim_model';
 export const config: CommandConfig = {
   name: 'sim',
   aliases: ['simi'],
-  version: '3.5.0',
+  version: '3.8.0',
   author: 'You',
   role: Role.ANYONE,
-  description: 'Savage Simsimi chat powered by Multi-Model API Provider.',
+  description: 'Savage Simsimi chat powered by ChatAnywhere Multi-Model API.',
   category: 'AI',
   hasPrefix: true,
   cooldown: 2,
@@ -37,7 +37,7 @@ export const onCommand = async ({ chat, args, db }: AppCtx): Promise<void> => {
   if (!input) {
     await chat.replyMessage({
       style: MessageStyle.MARKDOWN,
-      message: '💡 **Simsimi Multi-AI Guide:**\n• `sim <iyong tanong>` - Kausapin si Sim\n• `sim model <deepseek | gpt3 | gpt4 | gpt5 | embedding>` - Palitan ang utak ng AI\n• `sim on` - I-on ang auto-reply\n• `sim off` - Patayin ang auto-reply',
+      message: '💡 **Simsimi Multi-AI Guide:**\n• `sim <iyong tanong>` - Kausapin si Sim\n• `sim model <deepseek | gpt3 | gpt4 | gpt5 | embedding>` - Palitan ang AI\n• `sim on` - I-on ang auto-reply\n• `sim off` - Patayin ang auto-reply',
     });
     return;
   }
@@ -59,7 +59,7 @@ export const onCommand = async ({ chat, args, db }: AppCtx): Promise<void> => {
     await configColl.set(threadId, 'true');
     await chat.replyMessage({
       style: MessageStyle.MARKDOWN,
-      message: `🤖 **Sim Auto-Reply is now ON!** Engine: **${currentModel.toUpperCase()}**. Humanda kayo sa bardagulan. 💅`,
+      message: `🤖 **Sim Auto-Reply is now ON!** Engine: **${currentModel.toUpperCase()}**. Ready na mang-bardagil, bhie! 💅`,
     });
     return;
   }
@@ -68,7 +68,7 @@ export const onCommand = async ({ chat, args, db }: AppCtx): Promise<void> => {
     await configColl.set(threadId, 'false');
     await chat.replyMessage({
       style: MessageStyle.MARKDOWN,
-      message: '💤 **Sim Auto-Reply is now OFF.** Tatahimik na ako, paps.',
+      message: '💤 **Sim Auto-Reply is now OFF.** Tatahimik muna ako, paps.',
     });
     return;
   }
@@ -88,7 +88,7 @@ export const onCommand = async ({ chat, args, db }: AppCtx): Promise<void> => {
     await modelColl.set(threadId, targetModel);
     await chat.replyMessage({
       style: MessageStyle.MARKDOWN,
-      message: `🔄 **Model switched!** Simsimi is now using **${targetModel.toUpperCase()}** engine. 🚀`,
+      message: `🔄 **Model switched!** Gagamitin ko na ang **${targetModel.toUpperCase()}** ng ChatAnywhere. 🚀`,
     });
     return;
   }
@@ -104,16 +104,16 @@ export const onCommand = async ({ chat, args, db }: AppCtx): Promise<void> => {
     Keep your responses extremely short (1 to 2 sentences maximum). 
     Be brutally honest, witty, and playfully rude or roast the user if they insult you. Never sound like a formal, polite, or helpful AI assistant.`;
 
-    // Pagpili ng tamang Model ID base sa text na hiningi ng provider mo
-    let modelId = 'deepseek/deepseek-chat'; // default
+    // 🎯 ChatAnywhere Specific Model Mapping
+    let modelId = 'deepseek-chat'; 
     let isEmbedding = false;
 
-    if (currentModel === 'deepseek') modelId = 'deepseek/deepseek-chat';
-    if (currentModel === 'gpt3') modelId = 'openai/gpt-3.5-turbo';
-    if (currentModel === 'gpt4') modelId = 'openai/gpt-4o';
-    if (currentModel === 'gpt5') modelId = 'openai/gpt-5'; // palitan ng eksaktong gpt-5 model name ng provider mo kung meron na
+    if (currentModel === 'deepseek') modelId = 'deepseek-chat';
+    if (currentModel === 'gpt3') modelId = 'gpt-3.5-turbo';
+    if (currentModel === 'gpt4') modelId = 'gpt-4o-mini'; // Mas tipid sa free limits ng ChatAnywhere
+    if (currentModel === 'gpt5') modelId = 'gpt-4o'; // Dahil walang totoong gpt-5 free ang chatanywhere, fallback sa pinakamalakas nila
     if (currentModel === 'embedding') {
-      modelId = 'openai/text-embedding-3-small';
+      modelId = 'text-embedding-3-small';
       isEmbedding = true;
     }
 
@@ -121,11 +121,10 @@ export const onCommand = async ({ chat, args, db }: AppCtx): Promise<void> => {
     let requestBody: any = {
       model: modelId,
       messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: input }],
-      max_tokens: 70,
-      temperature: 0.85,
+      max_tokens: 80,
+      temperature: 0.8,
     };
 
-    // Kung embedding ang pinili
     if (isEmbedding) {
       endpoint = `${BASE_URL}/embeddings`;
       requestBody = {
@@ -144,7 +143,7 @@ export const onCommand = async ({ chat, args, db }: AppCtx): Promise<void> => {
     });
 
     if (!response.ok) {
-      throw new Error(`Provider API responded with status ${response.status}`);
+      throw new Error(`ChatAnywhere API responded with status ${response.status}`);
     }
 
     const data = await response.json() as any;
@@ -163,10 +162,10 @@ export const onCommand = async ({ chat, args, db }: AppCtx): Promise<void> => {
     });
 
   } catch (error) {
-    console.error('Multi-Model API Error:', error);
+    console.error('ChatAnywhere API Error:', error);
     await chat.replyMessage({
       style: MessageStyle.MARKDOWN,
-      message: `❌ **Luh, sumakit ang ulo ko.** Pakisiguro na tama ang \`PROVIDER_API_KEY\` mo sa Render settings at may credits ka pa, ssob! 🙄`,
+      message: `❌ **Luh, sumakit ang ulo ko.** Pakisiguro na tama ang \`PROVIDER_API_KEY\` galing sa ChatAnywhere at may natitira ka pang free requests ngayong araw, ssob! 🙄`,
     });
   }
 };
