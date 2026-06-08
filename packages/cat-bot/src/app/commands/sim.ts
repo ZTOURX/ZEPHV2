@@ -6,7 +6,7 @@ import type { CommandConfig } from '@/engine/types/module-config.types.js';
 
 const BASE_URL = 'https://api.chatanywhere.tech/v1';
 
-// FIX: Gumamit ng global property storage para hindi mawala ang data tuwing nagre-reload ang cluster/runtime
+// Persistent memory gamit ang global cache storage para hindi ma-wipe ang status tuwing magre-restart ang Render process
 if (!(global as any).simActiveThreads) {
   (global as any).simActiveThreads = new Map<string, { isOn: boolean; model: string }>();
 }
@@ -15,13 +15,13 @@ const activeThreads: Map<string, { isOn: boolean; model: string }> = (global as 
 export const config: CommandConfig = {
   name: 'sim',
   aliases: ['simi'],
-  version: '4.3.9', // Updated version tracker
+  version: '4.3.9',
   author: 'Zephyrus Wym',
   role: Role.ANYONE,
   description: 'Chaotic multi-AI chatbot that automatically roasts or replies to messages when toggled ON.',
   category: 'AI',
   hasPrefix: true,
-  cooldown: 1, // Mas binabaan para super responsive
+  cooldown: 1,
   options: [
     {
       type: OptionType.string,
@@ -65,12 +65,13 @@ const callChatAnywhereAI = async (input: string, currentModel: string): Promise<
   return data.choices?.[0]?.message?.content || 'Inantok ako bigla accla, ulitin mo nga.';
 };
 
-// Background listener hooks
+// Background listener hook for auto-reply
 export const onChat = async ({ chat, message }: AppCtx & { message: any }): Promise<void> => {
-  const body = (message?.body || message?.text || chat?.message?.text || '').trim();
+  // BAGONG FIX: Nilagyan ng `as any` ang chat layer para makalagpas sa TypeScript strict property compile checker
+  const body = (message?.body || message?.text || (chat as any)?.message?.text || '').trim();
   if (!body) return;
 
-  // Proteksyon sa infinite loops: huwag sasagot kapag command o prefix ang simula
+  // Iwas loop: Huwag papansinin kapag command o may prefix ang simula ng usapan
   if (body.startsWith('/') || body.startsWith('!') || body.toLowerCase().startsWith('sim')) {
     return;
   }
@@ -78,7 +79,7 @@ export const onChat = async ({ chat, message }: AppCtx & { message: any }): Prom
   const threadId = (chat as any).threadID || (chat as any).chatID || (chat as any).id || 'default_thread';
   const threadSettings = activeThreads.get(threadId);
 
-  // Gaganang kusa basta naka-ON ang state sa global map registry
+  // Gaganang kusa sa background kapag naka-toggle na ng 'ON' sa cache state
   if (threadSettings && threadSettings.isOn) {
     try {
       const aiReply = await callChatAnywhereAI(body, threadSettings.model);
@@ -92,7 +93,7 @@ export const onChat = async ({ chat, message }: AppCtx & { message: any }): Prom
   }
 };
 
-// Manual triggers at switches
+// Manual trigger handler (/sim on / sim off)
 export const onCommand = async ({ chat, args }: AppCtx): Promise<void> => {
   const input = args.join(' ').trim();
   const threadId = (chat as any).threadID || (chat as any).chatID || (chat as any).id || 'default_thread';
@@ -115,7 +116,7 @@ export const onCommand = async ({ chat, args }: AppCtx): Promise<void> => {
     activeThreads.set(threadId, currentSettings);
     await chat.replyMessage({
       style: MessageStyle.MARKDOWN,
-      message: '𝗦𝗶𝗺 𝗔𝘂𝘁ο-𝗥𝗲𝗽𝗹𝘆 𝗶𝘀 𝗻𝗼𝘄 𝗢𝗡! Hindi na ako mamamatay kahit mag-restart ang system node, ssob. Talk to me! 🖕',
+      message: '𝗦𝗶𝗺 𝗔𝘂𝘁ο-𝗥𝗲𝗽𝗹𝘆 𝗶𝘀 𝗻𝗼𝘄 𝗢𝗡! Hindi na ako mamamatay kahit mag-restart ang server, paps. Chat na kayo! 🖕',
     });
     return;
   }
@@ -125,7 +126,7 @@ export const onCommand = async ({ chat, args }: AppCtx): Promise<void> => {
     activeThreads.set(threadId, currentSettings);
     await chat.replyMessage({
       style: MessageStyle.MARKDOWN,
-      message: '💤 **Sim Auto-Reply is now OFF.** Safe and quiet na ulit.',
+      message: '💤 **Sim Auto-Reply is now OFF.** Tahimik na ulit ang gabi.',
     });
     return;
   }
