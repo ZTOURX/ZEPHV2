@@ -1,31 +1,37 @@
 import type { AppCtx } from '@/engine/types/controller.types.js';
 import { Role } from '@/engine/constants/role.constants.js';
-import { MessageStyle } from '@/engine/modules/command/message-style.constants.js';
+import { MessageStyle } from '@/engine/constants/message-style.constants.js';
+import { OptionType } from '@/engine/modules/command/command-option.constants.js';
 import type { CommandConfig } from '@/engine/types/module-config.types.js';
 
 export const config: CommandConfig = {
-  name: 'sendfile',
-  aliases: ['givefile', 'getfile'],
-  version: '1.0.0',
+  name: 'cmd',
+  aliases: ['module', 'commandmanager'],
+  version: '1.0.1',
   author: 'Zephyrus Wym',
-  role: Role.SYSTEM_ADMIN, // System-level admin role
-  description: 'Retrieve server source code files for administrative purposes.',
+  role: Role.BOT_ADMIN, // Changed from ADMIN to BOT_ADMIN
+  description: 'Manage bot modules',
   category: 'Admin',
   hasPrefix: true,
-  cooldown: 0,
+  cooldown: 5,
 };
 
 export const onCommand = async ({ chat, args }: AppCtx): Promise<void> => {
-  const fileNameInput = args.join(' ').trim();
-  
-  if (!fileNameInput) {
-    await chat.replyMessage({ style: MessageStyle.MARKDOWN, message: '❌ Error: File name cannot be empty.' });
-    return;
-  }
+  const action = args[0]?.toLowerCase();
 
-  // Logic is now handled by the framework's Role-based middleware
-  await chat.replyMessage({ 
-      style: MessageStyle.MARKDOWN, 
-      message: `✅ Command accepted for: **${fileNameInput}**.` 
-  });
+  switch (action) {
+    case 'count': {
+      await chat.replyMessage({
+        style: MessageStyle.MARKDOWN,
+        message: '📊 **System is running smoothly.**',
+      });
+      break;
+    }
+    default: {
+      await chat.replyMessage({
+        style: MessageStyle.MARKDOWN,
+        message: 'Available commands: `cmd count`',
+      });
+    }
+  }
 };
