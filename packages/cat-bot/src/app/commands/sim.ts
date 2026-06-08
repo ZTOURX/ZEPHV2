@@ -4,20 +4,22 @@ import { MessageStyle } from '@/engine/constants/message-style.constants.js';
 import { OptionType } from '@/engine/modules/command/command-option.constants.js';
 import type { CommandConfig } from '@/engine/types/module-config.types.js';
 
-const BASE_URL = 'https://api.chatanywhere.tech/v1'; 
-const SIM_CONFIG_COLLECTION = 'sim_config';
-const SIM_MODEL_COLLECTION = 'sim_model';
+const BASE_URL = 'https://api.chatanywhere.tech/v1';
+
+// 🧠 Dito isasave sa memory ng server kung sinong thread ang naka-ON ang sim at kung anong model ang gamit
+// Katumbas ng: global.simsimi = new Map() sa Mirai
+const activeThreads = new Map<string, { isOn: boolean; model: string }>();
 
 export const config: CommandConfig = {
   name: 'sim',
   aliases: ['simi'],
-  version: '4.3.0',
+  version: '4.3.7',
   author: 'Zephyrus Wym',
   role: Role.ANYONE,
   description: 'Chaotic multi-AI chatbot that automatically roasts or replies to messages when toggled ON.',
   category: 'AI',
   hasPrefix: true,
-  cooldown: 2,
+  cooldown: 5,
   options: [
     {
       type: OptionType.string,
@@ -29,7 +31,7 @@ export const config: CommandConfig = {
 };
 
 // =========================================================================
-// 🧠 CHATANYWHERE API CORE CALL
+// 🌐 CHATANYWHERE API CORE CALL
 // =========================================================================
 const callChatAnywhereAI = async (input: string, currentModel: string): Promise<string> => {
   const apiKey = process.env.PROVIDER_API_KEY || '';
@@ -40,7 +42,7 @@ const callChatAnywhereAI = async (input: string, currentModel: string): Promise<
   Keep your responses extremely short (1 to 2 sentences maximum). 
   Be brutally honest, witty, and playfully rude or roast the user if they insult you. Never sound like a formal, polite, or helpful AI assistant.`;
 
-  let modelId = 'deepseek-chat'; 
+  let modelId = 'deepseek-chat';
   if (currentModel === 'gpt3') modelId = 'gpt-3.5-turbo';
   if (currentModel === 'gpt4') modelId = 'gpt-4o-mini';
   if (currentModel === 'gpt5') modelId = 'gpt-4o';
@@ -65,44 +67,113 @@ const callChatAnywhereAI = async (input: string, currentModel: string): Promise<
 };
 
 // =========================================================================
-// 🛠️ MAIN COMMAND HANDLER (sim on / sim off / sim model)
+// 📡 HANDLE EVENT (Dito nakikinig sa normal na chat gamit ang memory Map)
 // =========================================================================
-export const onCommand = async ({ chat, args, db }: AppCtx): Promise<void> => {
+export const onEvent = async ({ chat, message }: AppCtx & { message: any }): Promise<void> => {
+  const body = message?.body?.trim() || '';
+  if (!body) return;
+
+  // Iwasan ang loop kapag ang chat ay command ng sim o may prefix
+  if (body.toLowerCase().startsWith('sim') || body.startsWith('/') || body.startsWith('!')) return;
+
+  const threadId = (chat as any).threadID || (chat as any).chatID || (chat as any).id || 'default_thread';
+  
+  // Tingnan sa memory kung naka-ON ang bot para sa thread/grupo na ito
+  const threadSettings = activeThreads.get(threadId);
+
+  if (threadSettings && threadSettings.isOn) {
+    try {
+      const aiReply = await callChatAnywhereAI(body, threadSettings.model);
+
+      await chat.replyMessage({
+        style: MessageStyle.MARKDOWN,
+        message: aiReply,
+      });
+    } catch (error) {
+      console.error('Sim Event API Error:', error);
+    }
+  }
+};
+
+// =========================================================================
+// 🛠️ RUN COMMAND (sim on / sim off / sim model <name> / sim <text>)
+// =========================================================================
+export const onCommand = async ({ chat, args }: AppCtx): Promise<void> => {
   const input = args.join(' ').trim();
   const threadId = (chat as any).threadID || (chat as any).chatID || (chat as any).id || 'default_thread';
 
-  if (!(await db.bot.isCollectionExist(SIM_CONFIG_COLLECTION))) await db.bot.createCollection(SIM_CONFIG_COLLECTION);
-  if (!(await db.bot.isCollectionExist(SIM_MODEL_COLLECTION))) await db.bot.createCollection(SIM_MODEL_COLLECTION);
-
-  const configColl = await db.bot.getCollection(SIM_CONFIG_COLLECTION);
-  const modelColl = await db.bot.getCollection(SIM_MODEL_COLLECTION);
-
-  const savedModel = await modelColl.get(threadId);
-  let currentModel = typeof savedModel === 'string' ? savedModel : 'deepseek';
+  // Kuhanin ang kasalukuyang state sa memory, kung wala pa, mag-default sa off at deepseek
+  if (!activeThreads.has(threadId)) {
+    activeThreads.set(threadId, { isOn: false, model: 'deepseek' });
+  }
+  const currentSettings = activeThreads.get(threadId)!;
 
   if (!input) {
     await chat.replyMessage({
       style: MessageStyle.MARKDOWN,
-      message: '💡 **Simsimi Multi-AI Guide:**\n• `sim <tanong>` - Kausapin si Sim\n• `sim model <deepseek | gpt3 | gpt4>` - Palitan ang AI\n• `sim on` - I-on ang automatic auto-reply sa thread na ito\n• `sim off` - Patayin ang auto-reply',
+      message: '💡 **Simsimi Multi-AI Guide:**\n• `sim <tanong>` - Kausapin si Sim\n• `sim model <deepseek | gpt3 | gpt4>` - Palitan ang AI\n• `sim on` - Buksan ang auto-reply\n• `sim off` - Patayin ang auto-reply',
     });
     return;
   }
 
-  // ⚡ SIM ON - Pag tinype ito, magsisimula na ang chat cycle
+  // 🔄 CASE "on"
   if (input.toLowerCase() === 'on') {
-    await configColl.set(threadId, 'true');
+    if (currentSettings.isOn) {
+      await chat.replyMessage({ style: MessageStyle.MARKDOWN, message: '❌ Naka-on na ang sim, paps. Huwag mo na ako paulit-ulitin!' });
+      return;
+    }
+    currentSettings.isOn = true;
+    activeThreads.set(threadId, currentSettings);
+    
     await chat.replyMessage({
       style: MessageStyle.MARKDOWN,
-      message: '𝗦𝗶𝗺 𝗔𝘂𝘁𝗼-𝗥𝗲𝗽𝗹𝘆 𝗶𝘀 𝗻𝗼𝘄 𝗢𝗡! Develop by: Zephyrus Wym. Ready na makipag-talastasan 🖕',
+      message: '𝗦𝗶𝗺 𝗔𝘂𝘁ο-𝗥𝗲𝗽𝗹𝘆 𝗶𝘀 𝗻𝗼𝘄 𝗢𝗡! Develop by: Zephyrus Wym. Ready na makipag-talastasan 🖕',
     });
     return;
   }
 
-  // SIM OFF
+  // 🔄 CASE "off"
   if (input.toLowerCase() === 'off') {
-    await configColl.set(threadId, 'false');
+    if (!currentSettings.isOn) {
+      await chat.replyMessage({ style: MessageStyle.MARKDOWN, message: '❌ Hindi pa naman nakabukas ang sim mo ah?' });
+      return;
+    }
+    currentSettings.isOn = false;
+    activeThreads.set(threadId, currentSettings);
+
     await chat.replyMessage({
       style: MessageStyle.MARKDOWN,
+      message: '💤 **Sim Auto-Reply is now OFF.** Tatahimik na ako, paps.',
+    });
+    return;
+  }
+
+  // 🔄 CASE "model"
+  if (args[0]?.toLowerCase() === 'model' && args[1]) {
+    const targetModel = args[1].toLowerCase();
+    if (!['deepseek', 'gpt3', 'gpt4', 'gpt5'].includes(targetModel)) {
+      await chat.replyMessage({ style: MessageStyle.MARKDOWN, message: '❌ Invalid model! Pumili lang sa: `deepseek`, `gpt3`, `gpt4`.' });
+      return;
+    }
+    currentSettings.model = targetModel;
+    activeThreads.set(threadId, currentSettings);
+
+    await chat.replyMessage({ style: MessageStyle.MARKDOWN, message: `🔄 Model switched to **${targetModel.toUpperCase()}**.` });
+    return;
+  }
+
+  // 🔄 DEFAULT (Manual single query: sim <tanong>)
+  try {
+    const responseText = await callChatAnywhereAI(input, currentSettings.model);
+    await chat.replyMessage({ style: MessageStyle.MARKDOWN, message: responseText });
+  } catch (error) {
+    console.error('Sim Manual Error:', error);
+  }
+};
+
+// Fallback exports para sigurado sa frameworks hook
+export const handleEvent = onEvent;
+export const onChat = onEvent;
       message: '💤 **Sim Auto-Reply is now OFF.** Tatahimik na ako, paps.',
     });
     return;
