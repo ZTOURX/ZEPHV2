@@ -29,7 +29,9 @@ export const config: CommandConfig = {
 
 export const onCommand = async ({ chat, args, db }: AppCtx): Promise<void> => {
   const input = args.join(' ').trim();
-  const threadId = chat.threadID || chat.chatID;
+  
+  // FIX: Safe ID check base sa ChatContext ng framework mo
+  const threadId = (chat as any).threadID || (chat as any).chatID || (chat as any).id || 'default_thread';
 
   if (!input) {
     await chat.replyMessage({
@@ -50,8 +52,9 @@ export const onCommand = async ({ chat, args, db }: AppCtx): Promise<void> => {
   const configColl = await db.bot.getCollection(SIM_CONFIG_COLLECTION);
   const modelColl = await db.bot.getCollection(SIM_MODEL_COLLECTION);
 
-  // Kuhanin ang kasalukuyang model ng GC na ito (Default: deepseek)
-  let currentModel = (await modelColl.get(threadId)) || 'deepseek';
+  // FIX: Tinitiyak na laging string ang babasahin para iwas toUpperCase() build error
+  const savedModel = await modelColl.get(threadId);
+  let currentModel = typeof savedModel === 'string' ? savedModel : 'deepseek';
 
   // ==================== [ SWITCH ON / OFF ] ====================
   if (input.toLowerCase() === 'on') {
@@ -104,7 +107,6 @@ export const onCommand = async ({ chat, args, db }: AppCtx): Promise<void> => {
     Keep your responses extremely short (1 to 2 sentences maximum). 
     Be brutally honest, witty, and playfully rude or roast the user if they insult you. Never sound like a formal, polite, or helpful AI assistant.`;
 
-    // Pagpili ng tamang API Credential base sa kung anong model ang active sa GC niyo
     if (currentModel === 'deepseek') {
       apiUrl = 'https://api.deepseek.com/chat/completions';
       apiKey = process.env.DEEPSEEK_API_KEY || '';
@@ -115,7 +117,6 @@ export const onCommand = async ({ chat, args, db }: AppCtx): Promise<void> => {
         temperature: 0.85,
       };
     } else if (currentModel === 'embedding') {
-      // Standard text embedding structure (OpenAI based format)
       apiUrl = 'https://api.openai.com/v1/embeddings';
       apiKey = process.env.OPENAI_API_KEY || '';
       requestBody = {
@@ -123,13 +124,12 @@ export const onCommand = async ({ chat, args, db }: AppCtx): Promise<void> => {
         input: input,
       };
     } else {
-      // Para sa GPT-3.5-Turbo, GPT-4o series, at GPT-5 series
       apiUrl = 'https://api.openai.com/v1/chat/completions';
       apiKey = process.env.OPENAI_API_KEY || '';
       
       let openAIModel = 'gpt-3.5-turbo';
       if (currentModel === 'gpt4') openAIModel = 'gpt-4o';
-      if (currentModel === 'gpt5') openAIModel = 'gpt-5'; // O pinakabagong gpt-5 alias model
+      if (currentModel === 'gpt5') openAIModel = 'gpt-5';
 
       requestBody = {
         model: openAIModel,
@@ -143,7 +143,7 @@ export const onCommand = async ({ chat, args, db }: AppCtx): Promise<void> => {
       throw new Error(`Missing API Key for model: ${currentModel}`);
     }
 
-    // Native Fetch Request para all-goods sa Render nang walang ini-install
+    // Native Fetch Request - Walang dependencies, ligtas sa build fail!
     const response = await fetch(apiUrl, {
       method: 'POST',
       headers: {
@@ -160,7 +160,6 @@ export const onCommand = async ({ chat, args, db }: AppCtx): Promise<void> => {
     const data = await response.json() as any;
     let simResponse = '';
 
-    // Iba ang response parser ng embedding kumpara sa chat completion
     if (currentModel === 'embedding') {
       const vector = data.data?.[0]?.embedding;
       simResponse = `🧬 **Embedding Vector Matrix Generated:** [${vector?.slice(0, 3).join(', ')}... total ${vector?.length} dimensions]`;
