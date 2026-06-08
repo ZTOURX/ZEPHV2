@@ -6,8 +6,7 @@ import type { CommandConfig } from '@/engine/types/module-config.types.js';
 
 const BASE_URL = 'https://api.chatanywhere.tech/v1';
 
-// 🧠 Dito isasave sa memory ng server kung sinong thread ang naka-ON ang sim at kung anong model ang gamit
-// Katumbas ng: global.simsimi = new Map() sa Mirai
+// 🧠 Pure Memory-Based Toggle Map (Katumbas ng global.simsimi = new Map())
 const activeThreads = new Map<string, { isOn: boolean; model: string }>();
 
 export const config: CommandConfig = {
@@ -67,18 +66,16 @@ const callChatAnywhereAI = async (input: string, currentModel: string): Promise<
 };
 
 // =========================================================================
-// 📡 HANDLE EVENT (Dito nakikinig sa normal na chat gamit ang memory Map)
+// 📡 HANDLE EVENT (Dito nakikinig sa normal na chat nang walang prefix)
 // =========================================================================
 export const onEvent = async ({ chat, message }: AppCtx & { message: any }): Promise<void> => {
   const body = message?.body?.trim() || '';
   if (!body) return;
 
-  // Iwasan ang loop kapag ang chat ay command ng sim o may prefix
+  // Iwasan ang loop kapag ang chat ay command ng sim mismo o iba pang bot commands
   if (body.toLowerCase().startsWith('sim') || body.startsWith('/') || body.startsWith('!')) return;
 
   const threadId = (chat as any).threadID || (chat as any).chatID || (chat as any).id || 'default_thread';
-  
-  // Tingnan sa memory kung naka-ON ang bot para sa thread/grupo na ito
   const threadSettings = activeThreads.get(threadId);
 
   if (threadSettings && threadSettings.isOn) {
@@ -102,7 +99,77 @@ export const onCommand = async ({ chat, args }: AppCtx): Promise<void> => {
   const input = args.join(' ').trim();
   const threadId = (chat as any).threadID || (chat as any).chatID || (chat as any).id || 'default_thread';
 
-  // Kuhanin ang kasalukuyang state sa memory, kung wala pa, mag-default sa off at deepseek
+  if (!activeThreads.has(threadId)) {
+    activeThreads.set(threadId, { isOn: false, model: 'deepseek' });
+  }
+  const currentSettings = activeThreads.get(threadId)!;
+
+  if (!input) {
+    await chat.replyMessage({
+      style: MessageStyle.MARKDOWN,
+      message: '💡 **Simsimi Multi-AI Guide:**\n• `sim <tanong>` - Kausapin si Sim\n• `sim model <deepseek | gpt3 | gpt4>` - Palitan ang AI\n• `sim on` - Buksan ang auto-reply\n• `sim off` - Patayin ang auto-reply',
+    });
+    return;
+  }
+
+  // 🔄 CASE: sim on
+  if (input.toLowerCase() === 'on') {
+    if (currentSettings.isOn) {
+      await chat.replyMessage({ style: MessageStyle.MARKDOWN, message: '❌ Naka-on na ang sim, paps. Huwag mo na ako paulit-ulitin!' });
+      return;
+    }
+    currentSettings.isOn = true;
+    activeThreads.set(threadId, currentSettings);
+    
+    await chat.replyMessage({
+      style: MessageStyle.MARKDOWN,
+      message: '𝗦𝗶𝗺 𝗔𝘂𝘁ο-𝗥𝗲𝗽𝗹𝘆 𝗶𝘀 𝗻𝗼𝘄 𝗢𝗡! Develop by: Zephyrus Wym. Ready na makipag-talastasan 🖕',
+    });
+    return;
+  }
+
+  // 🔄 CASE: sim off
+  if (input.toLowerCase() === 'off') {
+    if (!currentSettings.isOn) {
+      await chat.replyMessage({ style: MessageStyle.MARKDOWN, message: '❌ Hindi pa naman nakabukas ang sim mo ah?' });
+      return;
+    }
+    currentSettings.isOn = false;
+    activeThreads.set(threadId, currentSettings);
+
+    await chat.replyMessage({
+      style: MessageStyle.MARKDOWN,
+      message: '💤 **Sim Auto-Reply is now OFF.** Tatahimik na ako, paps.',
+    });
+    return;
+  }
+
+  // 🔄 CASE: sim model <name>
+  if (args[0]?.toLowerCase() === 'model' && args[1]) {
+    const targetModel = args[1].toLowerCase();
+    if (!['deepseek', 'gpt3', 'gpt4', 'gpt5'].includes(targetModel)) {
+      await chat.replyMessage({ style: MessageStyle.MARKDOWN, message: '❌ Invalid model! Pumili lang sa: `deepseek`, `gpt3`, `gpt4`.' });
+      return;
+    }
+    currentSettings.model = targetModel;
+    activeThreads.set(threadId, currentSettings);
+
+    await chat.replyMessage({ style: MessageStyle.MARKDOWN, message: `🔄 Model switched to **${targetModel.toUpperCase()}**.` });
+    return;
+  }
+
+  // 🔄 DEFAULT CASE: Manual ask (sim <tanong>)
+  try {
+    const responseText = await callChatAnywhereAI(input, currentSettings.model);
+    await chat.replyMessage({ style: MessageStyle.MARKDOWN, message: responseText });
+  } catch (error) {
+    console.error('Sim Manual Error:', error);
+  }
+};
+
+// Aliases para sa listener hooks ng engine mo
+export const handleEvent = onEvent;
+export const onChat = onEvent;
   if (!activeThreads.has(threadId)) {
     activeThreads.set(threadId, { isOn: false, model: 'deepseek' });
   }
