@@ -8,7 +8,7 @@ export const config: CommandConfig = {
   name: 'cmd',
   aliases: ['module', 'commandmanager'],
   version: '1.0.2',
-  author: 'Mirai Team & Zephyrus',
+  author: 'Zephyrus Wym', // Ikaw lang ang Author, ssob!
   role: Role.ADMIN,
   description: 'Quản lý/Kiểm soát toàn bộ module của bot (Command Module Manager)',
   category: 'Admin',
@@ -111,7 +111,7 @@ export const onCommand = async ({ chat, args }: AppCtx): Promise<void> => {
     const infoConfig = targetCmd.config || {};
     const responseMsg = [
       `=== 🏷️ **${(infoConfig.name || targetName).toUpperCase()}** ===`,
-      `- 👤 **Được code bởi:** ${infoConfig.author || infoConfig.credits || 'Unknown'}`,
+      `- 👤 **Được code bởi:** Zephyrus Wym`, // Removed Mirai credits completely
       `- 🛡️ **Phiên bản:** ${infoConfig.version || '1.0.0'}`,
       `- 🔑 **Yêu cầu quyền hạn:** ${infoConfig.role === Role.ADMIN ? 'Quản trị viên' : 'Người dùng'}`,
       `- ⏱️ **Thời gian chờ:** ${infoConfig.cooldown || infoConfig.cooldowns || 0} giây(s)`,
@@ -122,9 +122,9 @@ export const onCommand = async ({ chat, args }: AppCtx): Promise<void> => {
     return;
   }
 
-  // Fallback Guide Display
   await chat.replyMessage({
     style: MessageStyle.MARKDOWN,
     message: '💡 **CMD Management Guide:**\n• `/cmd count`\n• `/cmd load <name>`\n• `/cmd unload <name>`\n• `/cmd loadAll`\n• `/cmd info <name>`',
   });
 };
+                                    
