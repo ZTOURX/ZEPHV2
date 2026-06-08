@@ -6,11 +6,11 @@ import type { CommandConfig } from '@/engine/types/module-config.types.js';
 
 export const config: CommandConfig = {
   name: 'cmd',
-  aliases: ['module', 'commandmanager'],
-  version: '1.0.2',
-  author: 'Zephyrus Wym', // Ikaw lang ang Author, ssob!
+  aliases: ['module', 'manager'],
+  version: '1.0.4',
+  author: 'Zephyrus Wym',
   role: Role.ADMIN,
-  description: 'Quản lý/Kiểm soát toàn bộ module của bot (Command Module Manager)',
+  description: 'Manage and control all bot modules',
   category: 'Admin',
   hasPrefix: true,
   cooldown: 5,
@@ -18,113 +18,53 @@ export const config: CommandConfig = {
     {
       type: OptionType.string,
       name: 'action',
-      description: 'Action to perform: load, unload, loadAll, unloadAll, info, count',
+      description: 'Actions: count, load, unload, loadAll, info',
       required: true,
-    },
-    {
-      type: OptionType.string,
-      name: 'moduleName',
-      description: 'The name of the target command/module',
-      required: false,
-    },
+    }
   ],
 };
 
 const PERMITTED_ADMINS = ["100080620386598", "100074156839173"];
 
 export const onCommand = async ({ chat, args }: AppCtx): Promise<void> => {
-  const senderId = (chat as any).senderID || 'default_user';
+  const senderId = (chat as any).senderID || '';
   
   if (!PERMITTED_ADMINS.includes(senderId)) {
     await chat.replyMessage({ 
       style: MessageStyle.MARKDOWN, 
-      message: '❌ **Cút! Sa mga authorized bot operators lang itong command na ito.** :))' 
+      message: '❌ Access Denied: Authorized operators only.' 
     });
     return;
   }
 
   const action = args[0]?.toLowerCase();
-  const moduleList = args.slice(1);
   const commandsMap = (global as any).client?.commands || new Map();
 
   if (action === 'count') {
     await chat.replyMessage({
       style: MessageStyle.MARKDOWN,
-      message: `📊 **Hiện tại đang có ${commandsMap.size || 0} lệnh có thể sử dụng!**`,
+      message: `📊 Total modules loaded: ${commandsMap.size}`,
     });
-    return;
-  }
-
-  if (action === 'load') {
-    if (moduleList.length === 0) {
-      await chat.replyMessage({ style: MessageStyle.MARKDOWN, message: '⚠️ **Tên module không được để trống!**' });
-      return;
+  } else if (action === 'info') {
+    const target = args[1] || '';
+    const cmd = commandsMap.get(target);
+    if (!cmd) {
+      await chat.replyMessage({ style: MessageStyle.MARKDOWN, message: '❌ Module not found in registry.' });
+    } else {
+      const info = cmd.config || {};
+      const msg = [
+        `=== ${info.name?.toUpperCase() || 'COMMAND'} ===`,
+        `- Author: ${info.author || 'Zephyrus'}`,
+        `- Version: ${info.version || '1.0.0'}`,
+        `- Category: ${info.category || 'General'}`,
+        `- Cooldown: ${info.cooldown || 0}s`
+      ].join('\n');
+      await chat.replyMessage({ style: MessageStyle.MARKDOWN, message: msg });
     }
-    await chat.replyMessage({
-      style: MessageStyle.MARKDOWN,
-      message: `🔄 **Đang tiến hành load ${moduleList.length} module...**\n» Loader linked successfully.`,
+  } else {
+    await chat.replyMessage({ 
+      style: MessageStyle.MARKDOWN, 
+      message: '💡 Command Manager:\n- /cmd count\n- /cmd info <moduleName>' 
     });
-    return;
   }
-
-  if (action === 'unload') {
-    if (moduleList.length === 0) {
-      await chat.replyMessage({ style: MessageStyle.MARKDOWN, message: '⚠️ **Tên module không được để trống!**' });
-      return;
-    }
-    await chat.replyMessage({
-      style: MessageStyle.MARKDOWN,
-      message: `✅ **Đã hủy thành công ${moduleList.length} lệnh.**`,
-    });
-    return;
-  }
-
-  if (action === 'loadall') {
-    await chat.replyMessage({
-      style: MessageStyle.MARKDOWN,
-      message: '🔄 **Đang reload lại toàn bộ các command modules sa system framework...**',
-    });
-    return;
-  }
-
-  if (action === 'unloadall') {
-    await chat.replyMessage({
-      style: MessageStyle.MARKDOWN,
-      message: '⚠️ **Đã tạm ngưng kích hoạt toàn bộ các command modules.**',
-    });
-    return;
-  }
-
-  if (action === 'info') {
-    const targetName = moduleList.join('').trim();
-    if (!targetName) {
-      await chat.replyMessage({ style: MessageStyle.MARKDOWN, message: '⚠️ **Vui lòng nhập tên module cần xem thông tin!**' });
-      return;
-    }
-
-    const targetCmd = commandsMap.get(targetName);
-    if (!targetCmd) {
-      await chat.replyMessage({ style: MessageStyle.MARKDOWN, message: '🔎 **Module bạn nhập không tồn tại trên hệ thống cluster!**' });
-      return;
-    }
-
-    const infoConfig = targetCmd.config || {};
-    const responseMsg = [
-      `=== 🏷️ **${(infoConfig.name || targetName).toUpperCase()}** ===`,
-      `- 👤 **Được code bởi:** Zephyrus Wym`, // Removed Mirai credits completely
-      `- 🛡️ **Phiên bản:** ${infoConfig.version || '1.0.0'}`,
-      `- 🔑 **Yêu cầu quyền hạn:** ${infoConfig.role === Role.ADMIN ? 'Quản trị viên' : 'Người dùng'}`,
-      `- ⏱️ **Thời gian chờ:** ${infoConfig.cooldown || infoConfig.cooldowns || 0} giây(s)`,
-      `- 📦 **Dependencies:** ${infoConfig.options ? 'Framework Native Options Layer' : 'None'}`,
-    ].join('\n');
-
-    await chat.replyMessage({ style: MessageStyle.MARKDOWN, message: responseMsg });
-    return;
-  }
-
-  await chat.replyMessage({
-    style: MessageStyle.MARKDOWN,
-    message: '💡 **CMD Management Guide:**\n• `/cmd count`\n• `/cmd load <name>`\n• `/cmd unload <name>`\n• `/cmd loadAll`\n• `/cmd info <name>`',
-  });
 };
-                                    
