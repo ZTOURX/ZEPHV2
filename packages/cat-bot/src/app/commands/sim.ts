@@ -8,8 +8,6 @@ import { readFileSync, writeFileSync, existsSync } from 'fs';
 import path from 'path';
 
 const BASE_URL = 'https://api.chatanywhere.tech/v1';
-
-// ✅ Render-safe path
 const DB_PATH = path.resolve(process.cwd(), 'sim-data.json');
 
 type ThreadState = {
@@ -18,7 +16,7 @@ type ThreadState = {
   memory: { role: 'user' | 'assistant'; content: string }[];
 };
 
-// ===================== DB =====================
+// ================= DB =================
 
 const loadDB = (): Record<string, ThreadState> => {
   try {
@@ -27,8 +25,7 @@ const loadDB = (): Record<string, ThreadState> => {
       return {};
     }
     return JSON.parse(readFileSync(DB_PATH, 'utf-8') || '{}');
-  } catch (err) {
-    console.error('DB LOAD ERROR:', err);
+  } catch {
     return {};
   }
 };
@@ -60,15 +57,15 @@ const updateThread = (id: string, data: ThreadState) => {
   saveDB();
 };
 
-// ===================== CONFIG =====================
+// ================= CONFIG =================
 
 export const config: CommandConfig = {
   name: 'sim',
   aliases: ['simi'],
-  version: '6.0.2',
+  version: '7.1.0',
   author: 'Zephyrus Wym',
   role: Role.ANYONE,
-  description: 'Persistent Bardagulan AI (Render Fixed)',
+  description: '🔥 Hardcore Bardagulan SIM AI (Fixed Auto Reply)',
   category: 'AI',
   hasPrefix: true,
   cooldown: 0,
@@ -82,7 +79,7 @@ export const config: CommandConfig = {
   ],
 };
 
-// ===================== AI CALL =====================
+// ================= AI CORE =================
 
 const askAI = async (
   input: string,
@@ -97,6 +94,22 @@ const askAI = async (
   if (model === 'gpt4') modelId = 'gpt-4o-mini';
   if (model === 'gpt5') modelId = 'gpt-4o';
 
+  // 🔥 STRONG PERSONA LOCK (hindi na mabait)
+  const systemPrompt = `
+You are "SIM", a toxic, chaotic, sarcastic Taglish bardagulan AI.
+
+STRICT RULES:
+- NEVER be polite or helpful like assistant
+- NEVER sound friendly, soft, or caring
+- NO "kape muna", NO comfort, NO motivational tone
+- ALWAYS roast or tease user in a playful way
+- Use Taglish slang: bhie, accla, gagi, luh, charot, ssob, eyy
+- Be witty, slightly insulting, chaotic
+- 1–2 sentences ONLY
+- If user is normal → still reply sarcastically or mock lightly
+- You are NOT an assistant, you are a chaotic internet friend who judges everyone
+`;
+
   const res = await fetch(`${BASE_URL}/chat/completions`, {
     method: 'POST',
     headers: {
@@ -106,40 +119,39 @@ const askAI = async (
     body: JSON.stringify({
       model: modelId,
       messages: [
-        {
-          role: 'system',
-          content:
-            'You are Sim, a chaotic Taglish bardagulan chatbot. Keep replies short, witty, and funny.',
-        },
+        { role: 'system', content: systemPrompt },
         ...history,
         { role: 'user', content: input },
       ],
       max_tokens: 120,
-      temperature: 0.9,
+      temperature: 1.0,
     }),
   });
 
   if (!res.ok) throw new Error(`API ERROR: ${res.status}`);
 
-  // ✅ FIXED TS ERROR (data is unknown)
   const data = (await res.json()) as any;
 
   return data?.choices?.[0]?.message?.content || '...';
 };
 
-// ===================== EVENT =====================
+// ================= EVENT (FIXED AUTO REPLY) =================
 
 export const onEvent = async ({ chat, message }: AppCtx & { message: any }) => {
   const body = message?.body?.trim();
   if (!body) return;
 
-  if (body.startsWith('/') || body.startsWith('!') || body.startsWith('sim')) return;
+  const lower = body.toLowerCase();
+
+  // ❌ only block system commands, NOT normal text
+  if (lower.startsWith('/')) return;
 
   const threadId =
     (chat as any).threadID ||
     (chat as any).chatID ||
-    (chat as any).id ||
-    'default';
+    (chat as any).id;
+
+  if (!threadId) return;
 
   const thread = getThread(threadId);
 
@@ -160,11 +172,11 @@ export const onEvent = async ({ chat, message }: AppCtx & { message: any }) => {
       message: reply,
     });
   } catch (err) {
-    console.error('EVENT ERROR:', err);
+    console.error('AUTO REPLY ERROR:', err);
   }
 };
 
-// ===================== COMMAND =====================
+// ================= COMMAND =================
 
 export const onCommand = async ({ chat, args }: AppCtx) => {
   const input = args.join(' ').trim();
@@ -172,8 +184,7 @@ export const onCommand = async ({ chat, args }: AppCtx) => {
   const threadId =
     (chat as any).threadID ||
     (chat as any).chatID ||
-    (chat as any).id ||
-    'default';
+    (chat as any).id;
 
   const thread = getThread(threadId);
 
@@ -191,7 +202,7 @@ export const onCommand = async ({ chat, args }: AppCtx) => {
 
     return chat.replyMessage({
       style: MessageStyle.MARKDOWN,
-      message: '🔥 SIM ON',
+      message: '🔥 SIM BARDAGULAN MODE ON NA ACCHA',
     });
   }
 
@@ -201,7 +212,7 @@ export const onCommand = async ({ chat, args }: AppCtx) => {
 
     return chat.replyMessage({
       style: MessageStyle.MARKDOWN,
-      message: '💤 SIM OFF',
+      message: '💤 SIM OFF NA (tahimik muna ako)',
     });
   }
 
@@ -211,7 +222,7 @@ export const onCommand = async ({ chat, args }: AppCtx) => {
 
     return chat.replyMessage({
       style: MessageStyle.MARKDOWN,
-      message: `MODEL: ${thread.model}`,
+      message: `MODEL SWITCHED: ${thread.model}`,
     });
   }
 
