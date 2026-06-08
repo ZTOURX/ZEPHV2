@@ -22,7 +22,7 @@ export const config: CommandConfig = {
       type: OptionType.string,
       name: 'text',
       description: 'The question for Simsimi or toggle command (on/off/model <name>)',
-      required: true,
+      required: false,
     },
   ],
 };
@@ -61,9 +61,11 @@ const callChatAnywhereAI = async (input: string, currentModel: string): Promise<
 };
 
 export const onEvent = async ({ chat, message }: AppCtx & { message: any }): Promise<void> => {
-  const body = message?.body?.trim() || '';
+  // Sinisigurong babasahin kahit body o text ang pinasa ng system adapter mo
+  const body = (message?.body || message?.text || '').trim();
   if (!body) return;
 
+  // Huwag mag-trigger kung nagsisimula sa prefix o command mismo
   if (body.toLowerCase().startsWith('sim') || body.startsWith('/') || body.startsWith('!')) return;
 
   const threadId = (chat as any).threadID || (chat as any).chatID || (chat as any).id || 'default_thread';
@@ -100,29 +102,21 @@ export const onCommand = async ({ chat, args }: AppCtx): Promise<void> => {
   }
 
   if (input.toLowerCase() === 'on') {
-    if (currentSettings.isOn) {
-      await chat.replyMessage({ style: MessageStyle.MARKDOWN, message: '❌ Naka-on na ang sim, paps.' });
-      return;
-    }
     currentSettings.isOn = true;
     activeThreads.set(threadId, currentSettings);
     await chat.replyMessage({
       style: MessageStyle.MARKDOWN,
-      message: '𝗦𝗶𝗺 𝗔𝘂𝘁ο-𝗥𝗲𝗽𝗹𝘆 𝗶𝘀 𝗻𝗼𝘄 𝗢𝗡! Ready na makipag-talastasan 🖕',
+      message: '𝗦𝗶𝗺 𝗔𝘂𝘁ο-𝗥𝗲𝗽𝗹𝘆 𝗶𝘀 𝗻𝗼𝘄 𝗢𝗡! Magsalita lang kayo at rorostin ko kayo. 🖕',
     });
     return;
   }
 
   if (input.toLowerCase() === 'off') {
-    if (!currentSettings.isOn) {
-      await chat.replyMessage({ style: MessageStyle.MARKDOWN, message: '❌ Hindi pa nakabukas ang sim mo ah?' });
-      return;
-    }
     currentSettings.isOn = false;
     activeThreads.set(threadId, currentSettings);
     await chat.replyMessage({
       style: MessageStyle.MARKDOWN,
-      message: '💤 **Sim Auto-Reply is now OFF.** Tatahimik na ako, paps.',
+      message: '💤 **Sim Auto-Reply is now OFF.**',
     });
     return;
   }
