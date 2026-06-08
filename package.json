@@ -16,7 +16,7 @@
     "test:watch": "npm run test:watch -w packages/cat-bot",
     "seed:admin": "npm run seed:admin -w packages/cat-bot",
     "dev:all": "npx concurrently -n \"bot,web\" \"npm run dev\" \"npm run dev:web\"",
-    "build:all": "npx concurrently -n \"bot,web\" \"npm run build\" \"npm run build:web\""
+    "build:all": "npm run build && npm run build:web"
   },
   "workspaces": [
     "packages/cat-bot",
