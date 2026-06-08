@@ -9,7 +9,7 @@ import path from 'path';
 
 const BASE_URL = 'https://api.chatanywhere.tech/v1';
 
-// ✅ RENDER SAFE PATH (IMPORTANT FIX)
+// ✅ Render-safe path
 const DB_PATH = path.resolve(process.cwd(), 'sim-data.json');
 
 type ThreadState = {
@@ -18,7 +18,8 @@ type ThreadState = {
   memory: { role: 'user' | 'assistant'; content: string }[];
 };
 
-// ✅ SAFE DB LOADER
+// ===================== DB =====================
+
 const loadDB = (): Record<string, ThreadState> => {
   try {
     if (!existsSync(DB_PATH)) {
@@ -34,7 +35,6 @@ const loadDB = (): Record<string, ThreadState> => {
 
 let db = loadDB();
 
-// ✅ SAFE SAVE (anti crash)
 const saveDB = () => {
   try {
     writeFileSync(DB_PATH, JSON.stringify(db, null, 2));
@@ -60,13 +60,15 @@ const updateThread = (id: string, data: ThreadState) => {
   saveDB();
 };
 
+// ===================== CONFIG =====================
+
 export const config: CommandConfig = {
   name: 'sim',
   aliases: ['simi'],
-  version: '6.0.1',
+  version: '6.0.2',
   author: 'Zephyrus Wym',
   role: Role.ANYONE,
-  description: 'Persistent Bardagulan AI (Render safe)',
+  description: 'Persistent Bardagulan AI (Render Fixed)',
   category: 'AI',
   hasPrefix: true,
   cooldown: 0,
@@ -79,6 +81,8 @@ export const config: CommandConfig = {
     },
   ],
 };
+
+// ===================== AI CALL =====================
 
 const askAI = async (
   input: string,
@@ -105,7 +109,7 @@ const askAI = async (
         {
           role: 'system',
           content:
-            'You are Sim, a chaotic Taglish bardagulan chatbot. Keep replies short and witty.',
+            'You are Sim, a chaotic Taglish bardagulan chatbot. Keep replies short, witty, and funny.',
         },
         ...history,
         { role: 'user', content: input },
@@ -117,9 +121,13 @@ const askAI = async (
 
   if (!res.ok) throw new Error(`API ERROR: ${res.status}`);
 
-  const data = await res.json();
-  return data.choices?.[0]?.message?.content || '...';
+  // ✅ FIXED TS ERROR (data is unknown)
+  const data = (await res.json()) as any;
+
+  return data?.choices?.[0]?.message?.content || '...';
 };
+
+// ===================== EVENT =====================
 
 export const onEvent = async ({ chat, message }: AppCtx & { message: any }) => {
   const body = message?.body?.trim();
@@ -155,6 +163,8 @@ export const onEvent = async ({ chat, message }: AppCtx & { message: any }) => {
     console.error('EVENT ERROR:', err);
   }
 };
+
+// ===================== COMMAND =====================
 
 export const onCommand = async ({ chat, args }: AppCtx) => {
   const input = args.join(' ').trim();
