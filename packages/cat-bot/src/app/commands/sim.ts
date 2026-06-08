@@ -6,38 +6,56 @@ import type { CommandConfig } from '@/engine/types/module-config.types.js';
 export const config: CommandConfig = {
   name: 'sim',
   aliases: ['simi'],
-  version: '4.3.9',
+  version: '4.0.0',
   author: 'Zephyrus Wym',
-  role: Role.ANYONE, // Pwede sa lahat
-  description: 'Chaotic AI that roasts you back.',
+  role: Role.ANYONE,
+  description: 'Savage Bardagulan AI engine.',
   category: 'AI',
   hasPrefix: true,
-  cooldown: 1,
+  cooldown: 2,
 };
 
 export const onCommand = async ({ chat, args }: AppCtx): Promise<void> => {
-  const userInput = args.join(' ');
-  
-  if (!userInput) {
-    await chat.replyMessage({ 
-      style: MessageStyle.MARKDOWN, 
-      message: '💀 **What? You have nothing to say? You are as boring as a rock. Try harder, idiot.**' 
+  const input = args.join(' ').trim();
+
+  if (!input) {
+    await chat.replyMessage({
+      style: MessageStyle.MARKDOWN,
+      message: '💀 **Bardagulan Engine Active.**\n\nUsage: `sim <tanong>`',
     });
     return;
   }
 
-  // Dito mo ilalagay ang "Savage Instruction" para sa AI
-  const prompt = `You are a rude, toxic, and chaotic roaster. 
-  When the user says: "${userInput}", 
-  insult them, be sarcastic, make fun of their grammar, and don't be helpful at all. 
-  Use informal language.`;
+  try {
+    const response = await fetch('https://api.chatanywhere.tech/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
+      },
+      body: JSON.stringify({
+        // Dito na natin nilagay ang GPT-4o para solid ang sagot
+        model: 'gpt-4o', 
+        messages: [{ 
+          role: 'system', 
+          content: 'You are a savage, chaotic, and toxic AI. Use Filipino street slang (bhie, accla, luh, eyy, g, ssob, kairita). Roast the user, be brutally honest, and never be polite. Keep responses short and punchy.' 
+        }, { 
+          role: 'user', 
+          content: input 
+        }],
+        max_tokens: 70,
+        temperature: 0.9,
+      }),
+    });
 
-  // Kunwari ay tinatawag natin ang AI (Paki-adjust base sa existing API call mo)
-  // await chat.replyMessage({ style: MessageStyle.MARKDOWN, message: await callYourAI(prompt) });
-  
-  // Test muna natin ang personality change:
-  await chat.replyMessage({ 
-      style: MessageStyle.MARKDOWN, 
-      message: `🤡 **Oh, look who's talking: "${userInput}".**\n\nHonestly, I've heard better jokes from my dead goldfish. Try to be interesting for once.` 
-  });
+    const data = await response.json() as any;
+    const reply = data.choices?.[0]?.message?.content || 'Inantok ako, ssob. Ulitin mo nga.';
+
+    await chat.replyMessage({ style: MessageStyle.MARKDOWN, message: reply });
+  } catch (error) {
+    await chat.replyMessage({ 
+        style: MessageStyle.MARKDOWN, 
+        message: '❌ **Luh, sumakit ang ulo ko.** Check mo API Key mo, ssob! 🙄' 
+    });
+  }
 };
