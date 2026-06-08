@@ -5,9 +5,12 @@ import { OptionType } from '@/engine/modules/command/command-option.constants.js
 import type { CommandConfig } from '@/engine/types/module-config.types.js';
 
 import { readFileSync, writeFileSync, existsSync } from 'fs';
+import path from 'path';
 
 const BASE_URL = 'https://api.chatanywhere.tech/v1';
-const DB_PATH = './sim-data.json';
+
+// ✅ RENDER SAFE PATH (IMPORTANT FIX)
+const DB_PATH = path.resolve(process.cwd(), 'sim-data.json');
 
 type ThreadState = {
   isOn: boolean;
@@ -15,19 +18,29 @@ type ThreadState = {
   memory: { role: 'user' | 'assistant'; content: string }[];
 };
 
+// ✅ SAFE DB LOADER
 const loadDB = (): Record<string, ThreadState> => {
-  if (!existsSync(DB_PATH)) return {};
   try {
-    return JSON.parse(readFileSync(DB_PATH, 'utf-8'));
-  } catch {
+    if (!existsSync(DB_PATH)) {
+      writeFileSync(DB_PATH, '{}');
+      return {};
+    }
+    return JSON.parse(readFileSync(DB_PATH, 'utf-8') || '{}');
+  } catch (err) {
+    console.error('DB LOAD ERROR:', err);
     return {};
   }
 };
 
 let db = loadDB();
 
+// ✅ SAFE SAVE (anti crash)
 const saveDB = () => {
-  writeFileSync(DB_PATH, JSON.stringify(db, null, 2));
+  try {
+    writeFileSync(DB_PATH, JSON.stringify(db, null, 2));
+  } catch (err) {
+    console.error('DB SAVE ERROR:', err);
+  }
 };
 
 const getThread = (id: string): ThreadState => {
@@ -50,10 +63,10 @@ const updateThread = (id: string, data: ThreadState) => {
 export const config: CommandConfig = {
   name: 'sim',
   aliases: ['simi'],
-  version: '6.0.0',
+  version: '6.0.1',
   author: 'Zephyrus Wym',
   role: Role.ANYONE,
-  description: 'Persistent Bardagulan AI (cat-bot)',
+  description: 'Persistent Bardagulan AI (Render safe)',
   category: 'AI',
   hasPrefix: true,
   cooldown: 0,
@@ -92,7 +105,7 @@ const askAI = async (
         {
           role: 'system',
           content:
-            'You are Sim, a chaotic Taglish bardagulan chatbot. Short replies only.',
+            'You are Sim, a chaotic Taglish bardagulan chatbot. Keep replies short and witty.',
         },
         ...history,
         { role: 'user', content: input },
@@ -102,7 +115,7 @@ const askAI = async (
     }),
   });
 
-  if (!res.ok) throw new Error('API ERROR');
+  if (!res.ok) throw new Error(`API ERROR: ${res.status}`);
 
   const data = await res.json();
   return data.choices?.[0]?.message?.content || '...';
@@ -112,8 +125,7 @@ export const onEvent = async ({ chat, message }: AppCtx & { message: any }) => {
   const body = message?.body?.trim();
   if (!body) return;
 
-  if (body.startsWith('/') || body.startsWith('!') || body.startsWith('sim'))
-    return;
+  if (body.startsWith('/') || body.startsWith('!') || body.startsWith('sim')) return;
 
   const threadId =
     (chat as any).threadID ||
