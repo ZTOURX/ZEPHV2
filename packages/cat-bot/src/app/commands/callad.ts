@@ -1,108 +1,140 @@
-import type { AppCtx } from '@/engine/types/controller.types.js';
-import { Role } from '@/engine/constants/role.constants.js';
-import { MessageStyle } from '@/engine/constants/message-style.constants.js';
-import { OptionType } from '@/engine/modules/command/command-option.constants.js';
-import type { CommandConfig } from '@/engine/types/module-config.types.js';
-
-// Cache para subaybayan ang thread at message mapping kapag nagre-reply ang admin/user
-export const replyTracking = new Map<string, {
-  type: 'reply' | 'calladmin';
-  author: string;
-  threadId: string;
-  originalMessageId: string;
-}>();
+import type { AppCtx } from '@/engine/types/controller.types.js'
+import { Role } from '@/engine/constants/role.constants.js'
+import { MessageStyle } from '@/engine/constants/message-style.constants.js'
+import type { CommandConfig } from '@/engine/types/module-config.types.js'
 
 export const config: CommandConfig = {
   name: 'callad',
-  aliases: ['report', 'feedback'],
   version: '1.0.1',
-  author: 'NTKhang, ManhG Fix & Zephyrus',
-  role: Role.ANYONE, // Kahit sino pwedeng mag-report
-  description: "Report bot's error or send comments straight to the bot admin.",
-  category: 'group',
-  hasPrefix: true,
+  role: Role.ANYONE,
+  author: 'NTKhang, ManhG Fix Get',
+  description: 'Report bot errors or send comments to admins',
+  usage: '[error encountered or comments]',
   cooldown: 5,
-  options: [
-    {
-      type: OptionType.string,
-      name: 'content',
-      description: 'The error or comment you want to report',
-      required: true,
-    },
-  ],
-};
+  hasPrefix: true,
+}
 
-// Nilipat at inayos ang handleReply/onReply logic para sa message context ng framework mo
-export const onReply = async ({ chat, message }: AppCtx & { message: any }): Promise<void> => {
-  const body = (message?.body || message?.text || '').trim();
-  const replyTo = message?.messageReply;
-  if (!body || !replyTo) return;
+// NOTE — ADMIN ID BROADCAST:
+//   The original iterated global.config.ADMINBOT to DM every admin.
+//   Cat Bot has no ctx API to enumerate admin IDs at runtime inside a handler.
+//   Set ADMIN_THREAD_ID to the admin's platform user ID (or DM thread ID).
+//   For multi-admin broadcast, call onCommand for each ID manually here.
+const ADMIN_THREAD_ID = '100092470756002'
 
-  const savedReply = replyTracking.get(replyTo.messageID);
-  if (!savedReply) return;
+const STATE = {
+  awaiting_admin_reply: 'awaiting_admin_reply',
+  awaiting_user_reply: 'awaiting_user_reply',
+}
 
-  const senderName = message?.senderName || 'User';
+export const onReply = {
+  // Admin received the report and replied → relay back to user
+  [STATE.awaiting_admin_reply]: async ({ chat, session, event, state, user }: AppCtx) => {
+    const adminReply = event['message'] as string
+    const originalThreadID = session.context['originalThreadID'] as string
+    const originalMessageID = session.context['originalMessageID'] as string
+    const reporterName = session.context['reporterName'] as string
+    const senderID = event['senderID'] as string
+    const adminName = await user.getName(senderID)
 
-  // Kapag si Admin ang nag-reply sa feedback
-  if (savedReply.type === 'calladmin') {
-    try {
-      await chat.replyMessage({
-        style: MessageStyle.MARKDOWN,
-        message: `📌 **Feedback from admin ${senderName} to you:**\n--------\n${body}\n--------\n» 💬 *Reply to this message to continue sending reports to admin.*`,
-      });
-    } catch (error) {
-      console.error('Error sending admin reply:', error);
+    state.delete(session.id)
+
+    const msgId = await chat.reply({
+      style: MessageStyle.MARKDOWN,
+      message:
+        `📌 **Feedback from admin ${adminName} to you:**\n` +
+        `--------\n` +
+        `${adminReply}\n` +
+        `--------\n` +
+        `» 💬 Reply to this message to continue sending reports to admin`,
+      thread_id: originalThreadID,
+      reply_to_message_id: originalMessageID,
+    })
+
+    if (msgId) {
+      state.create({
+        id: state.generateID({ id: String(msgId) }),
+        state: STATE.awaiting_user_reply,
+        context: { reporterName, adminName },
+      })
     }
-  } 
-  // Kapag ang User naman ang sumagot pabalik sa report
-  else if (savedReply.type === 'reply') {
-    const adminBots = (global as any).config?.ADMINBOT || ["100080620386598"]; // Default active admin IDs
-    for (const adminId of adminBots) {
-      try {
-        await chat.replyMessage({
-          style: MessageStyle.MARKDOWN,
-          message: `📄 **Feedback from ${senderName}:**\n${body}`,
-        });
-      } catch (error) {
-        console.error('Error forwarding feedback to admin:', error);
-      }
+  },
+
+  // User replied to admin's feedback → forward back to admin
+  [STATE.awaiting_user_reply]: async ({ chat, session, event, state, user }: AppCtx) => {
+    const userMessage = event['message'] as string
+    const senderID = event['senderID'] as string
+    const threadID = event['threadID'] as string
+    const messageID = event['messageID'] as string
+    const senderName = await user.getName(senderID)
+
+    state.delete(session.id)
+
+    const msgId = await chat.reply({
+      style: MessageStyle.MARKDOWN,
+      message: `📄 **Feedback from ${senderName}:**\n${userMessage}`,
+      thread_id: ADMIN_THREAD_ID,
+    })
+
+    if (msgId) {
+      state.create({
+        id: state.generateID({ id: String(msgId) }),
+        state: STATE.awaiting_admin_reply,
+        context: {
+          originalThreadID: threadID,
+          originalMessageID: messageID,
+          reporterName: senderName,
+        },
+      })
     }
+  },
+}
+
+export const onCommand = async ({ chat, args, event, state, user }: AppCtx): Promise<void> => {
+  const reportText = args.join(' ').trim()
+
+  if (!reportText) {
+    await chat.replyMessage({
+      style: MessageStyle.TEXT,
+      message: 'You have not entered the content to report.',
+    })
+    return
   }
-};
 
-export const onCommand = async ({ chat, args }: AppCtx): Promise<void> => {
-  const content = args.join(' ').trim();
-  const threadId = (chat as any).threadID || (chat as any).chatID || (chat as any).id || 'default_thread';
-  const senderId = (chat as any).senderID || 'default_user';
-  const senderName = (chat as any).senderName || 'User';
+  const senderID = event['senderID'] as string
+  const threadID = event['threadID'] as string
+  const messageID = event['messageID'] as string
+  const senderName = await user.getName(senderID)
+  const now = new Date().toLocaleString('en-PH', { timeZone: 'Asia/Manila' })
 
-  if (!content) {
-    await chat.replyMessage({ style: MessageStyle.MARKDOWN, message: '❌ **You have not entered the content to report.**' });
-    return;
-  }
-
-  const timestamp = new Date().toLocaleString('en-US', { timeZone: 'Asia/Manila' });
-
-  // Paunang feedback sa user na natanggap ang report nila
+  // Confirm to reporter
   await chat.replyMessage({
+    style: MessageStyle.TEXT,
+    message: `At: ${now}\nYour report has been sent to the bot admins.`,
+  })
+
+  // Send report to admin thread
+  const msgId = await chat.reply({
     style: MessageStyle.MARKDOWN,
-    message: `At: \`${timestamp}\`\nYour report has been sent to the bot admins!`,
-  });
+    message:
+      `👤 **Report from:** ${senderName}\n` +
+      `👨‍👩‍👧‍👧 **Thread ID:** ${threadID}\n` +
+      `🔷 **User ID:** ${senderID}\n` +
+      `-----------------\n` +
+      `⚠️ **Report:** ${reportText}\n` +
+      `-----------------\n` +
+      `🕐 **Time:** ${now}`,
+    thread_id: ADMIN_THREAD_ID,
+  })
 
-  const adminBots = (global as any).config?.ADMINBOT || ["100080620386598"];
-  const boxName = (chat as any).threadName || 'Group Chat';
-
-  // I-forward sa lahat ng config admins ang report kasama ang IDs
-  for (const adminId of adminBots) {
-    try {
-      await chat.replyMessage({
-        style: MessageStyle.MARKDOWN,
-        message: `👤 **Report from:** ${senderName}\n👨‍👩‍👧‍👧 **Box:** ${boxName}\n🔰 **ID Box:** \`${threadId}\`\n🔷 **ID User:** \`${senderId}\`\n-----------------\n⚠️ **Error:** ${content}\n-----------------\nTime: ${timestamp}`,
-      });
-    } catch (error) {
-      console.error(`Failed to send report to admin ${adminId}:`, error);
-    }
+  if (msgId) {
+    state.create({
+      id: state.generateID({ id: String(msgId) }),
+      state: STATE.awaiting_admin_reply,
+      context: {
+        originalThreadID: threadID,
+        originalMessageID: messageID,
+        reporterName: senderName,
+      },
+    })
   }
-};
-
-export const handleReply = onReply;
+}
